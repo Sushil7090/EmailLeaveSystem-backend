@@ -6,30 +6,35 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const mongoose = require("mongoose");
 const userAuthRoutes = require("./routes/userAuthRoutes");
-const startEmailListener = require('./services/mailParser');
+const startEmailListener = require("./services/mailParser");
 const emailRoutes = require("./routes/emaildata");
 const empRoutes = require("./routes/employeeRoutes");
 const adminRoutes = require("./routes/adminRoutes");
-const path = require('path');
+const path = require("path");
 
+// ==============================
+// 🧩 MongoDB Connection
+// ==============================
 async function main() {
-    try {
-        await mongoose.connect(process.env.DBCONNECT, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
-        console.log("✅ DB connected successfully");
+  try {
+    await mongoose.connect(process.env.DBCONNECT, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log("✅ DB connected successfully");
 
-        // Only start email listener if ENABLE_EMAIL is true
-        if (process.env.ENABLE_EMAIL === 'true') {
-            console.log("📧 Starting email listener...");
-            startEmailListener();
-        } else {
-            console.log("⚙️ Email listener is disabled. Set ENABLE_EMAIL=true in .env to enable it.");
-        }
-    } catch (err) {
-        console.error("❌ DB connection failed:", err);
+    // Start email listener only if enabled
+    if (process.env.ENABLE_EMAIL === "true") {
+      console.log("📧 Starting email listener...");
+      startEmailListener();
+    } else {
+      console.log(
+        "⚙️ Email listener is disabled. Set ENABLE_EMAIL=true in .env to enable it."
+      );
     }
+  } catch (err) {
+    console.error("❌ DB connection failed:", err);
+  }
 }
 
 main();
@@ -37,75 +42,87 @@ main();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ✅ Allow both localhost and Render frontend
-const allowedOrigins = [
-    'http://localhost:8080',
-    'https://leave-management-fe-du86.onrender.com'
-];
+// ==============================
+// 🌍 CORS Configuration
+// ==============================
+// Now taken dynamically from .env (comma-separated)
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",")
+  : ["http://localhost:8080"];
 
-app.use(cors({
+app.use(
+  cors({
     origin: function (origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log("🚫 Blocked by CORS:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
     },
-    credentials: true
-}));
+    credentials: true,
+  })
+);
 
+// ==============================
+// 🧱 Middleware
+// ==============================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-console.log('[INFO] Registering API routes...');
-
-// ✅ Register routes
-app.use(['/emails', '/api/emails'], emailRoutes);
-console.log('[INFO] Email routes registered at /emails and /api/emails');
-
+// ==============================
+// 🛣️ Register Routes
+// ==============================
+console.log("[INFO] Registering API routes...");
+app.use(["/emails", "/api/emails"], emailRoutes);
 app.use(["/auth", "/api/auth"], userAuthRoutes);
-console.log('[INFO] Auth routes registered at /auth and /api/auth');
-
 app.use(["/employee", "/api/employee"], empRoutes);
-console.log('[INFO] Employee routes registered at /employee and /api/employee');
-
 app.use(["/admin", "/api/admin"], adminRoutes);
-console.log('[INFO] Admin routes registered at /admin and /api/admin');
+console.log("[INFO] All routes registered successfully.");
 
-app.get("/health", (req, res) => {
-    res.json({ ok: true });
-});
+// Health Check Endpoint
+app.get("/health", (req, res) => res.json({ ok: true }));
 
-// Catch-all route for debugging (non-production)
-if (process.env.NODE_ENV !== 'production') {
-    app.get('*', (req, res) => {
-        console.log(`[DEBUG] Unhandled GET request to: ${req.path}`);
-        res.status(404).json({
-            error: 'Route not found',
-            path: req.path,
-            method: req.method,
-            message: 'This route is not handled by the backend. Make sure you are accessing the correct port.'
-        });
+// ==============================
+// 🧭 Catch-all Route (Dev Only)
+// ==============================
+if (process.env.NODE_ENV !== "production") {
+  app.get("*", (req, res) => {
+    console.log(`[DEBUG] Unhandled GET request to: ${req.path}`);
+    res.status(404).json({
+      error: "Route not found",
+      path: req.path,
+      method: req.method,
+      message:
+        "This route is not handled by the backend. Make sure you are accessing the correct port.",
     });
+  });
 }
 
-// Serve frontend in production (optional)
-if (process.env.NODE_ENV === 'production' && process.env.SERVE_FRONTEND === 'true') {
-    const frontendDist = path.join(__dirname, '..', 'Frontend', 'dist');
-    app.use(express.static(frontendDist));
-    app.get('*', (req, res) => {
-        res.sendFile(path.join(frontendDist, 'index.html'));
-    });
+// ==============================
+// 📦 Serve Frontend (Optional)
+// ==============================
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.SERVE_FRONTEND === "true"
+) {
+  const frontendDist = path.join(__dirname, "..", "Frontend", "dist");
+  app.use(express.static(frontendDist));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
 }
 
+// ==============================
+// 🚀 Start Server
+// ==============================
 app.listen(PORT, () => {
-    console.log(`🚀 Backend server started on port ${PORT}`);
-    console.log(`📱 Frontend: localhost:8080 or Render`);
-    console.log(`🔧 API Base URL: http://localhost:${PORT}`);
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🚀 Backend server started on port ${PORT}`);
+  console.log(`📱 Frontend: localhost:8080 or Render`);
+  console.log(`🔧 API Base URL: http://localhost:${PORT}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
 });
 
 module.exports = app;
