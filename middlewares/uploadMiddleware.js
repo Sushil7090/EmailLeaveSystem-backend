@@ -59,3 +59,11 @@ const uploadLeaveAttachments = multer({
 }).array('attachments', 5);
 
 module.exports.uploadLeaveAttachments = uploadLeaveAttachments;
+
+// For Client Project Documents (allow all file types)
+const multerProjectDocs = multer({
+    storage,
+    limits: { fileSize: 20 * 1024 * 1024 } // 20MB
+});
+
+module.exports.uploadProjectDocuments = multerProjectDocs;

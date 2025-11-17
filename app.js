@@ -12,6 +12,9 @@ const empRoutes = require("./routes/employeeRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const path = require("path");
 
+// ⭐ NEW ROUTE ADDED HERE
+const clientProjectRoutes = require("./routes/clientProjectRoute");
+
 // ==============================
 // 🧩 MongoDB Connection
 // ==============================
@@ -23,7 +26,6 @@ async function main() {
     });
     console.log("✅ DB connected successfully");
 
-    // Start email listener only if enabled
     if (process.env.ENABLE_EMAIL === "true") {
       console.log("📧 Starting email listener...");
       startEmailListener();
@@ -45,7 +47,6 @@ const PORT = process.env.PORT || 5000;
 // ==============================
 // 🌍 CORS Configuration
 // ==============================
-// Now taken dynamically from .env (comma-separated)
 const allowedOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(",")
   : ["http://localhost:8080"];
@@ -76,13 +77,20 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // 🛣️ Register Routes
 // ==============================
 console.log("[INFO] Registering API routes...");
+
 app.use(["/emails", "/api/emails"], emailRoutes);
 app.use(["/auth", "/api/auth"], userAuthRoutes);
 app.use(["/employee", "/api/employee"], empRoutes);
 app.use(["/admin", "/api/admin"], adminRoutes);
+
+// ⭐ NEW CLIENT-PROJECT ROUTE ADDED
+app.use(["/client-project", "/api/client-project"], clientProjectRoutes);
+
 console.log("[INFO] All routes registered successfully.");
 
-// Health Check Endpoint
+// ==============================
+// Health Check
+// ==============================
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 // ==============================
