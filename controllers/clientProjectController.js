@@ -22,7 +22,9 @@ exports.createProject = async (req, res) => {
             return res.status(400).json({ success: false, message: "Project title is required" });
         }
 
-        const project = await ClientProject.create({ ...req.body });
+        const documentPaths = extractDocumentPaths(req.files);
+
+        const project = await ClientProject.create({ ...req.body, documents: documentPaths });
 
         res.status(201).json({
             success: true,
@@ -66,7 +68,7 @@ exports.getProjectById = async (req, res) => {
 // =============================
 exports.addMeeting = async (req, res) => {
     try {
-        const { title, description } = req.body;
+        const { title, description, date } = req.body;
         if (!title) return res.status(400).json({ success: false, message: "Meeting title is required" });
 
         const project = await ClientProject.findById(req.params.id);
@@ -74,7 +76,9 @@ exports.addMeeting = async (req, res) => {
 
         const documentPaths = extractDocumentPaths(req.files);
 
-        project.meetings.push({ title, description, documents: documentPaths });
+        const meetingDate = date ? new Date(date) : new Date();
+
+        project.meetings.push({ title, description, documents: documentPaths, date: meetingDate });
         await project.save();
 
         res.status(200).json({
@@ -97,9 +101,23 @@ exports.editProject = async (req, res) => {
         const documentPaths = extractDocumentPaths(req.files);
 
         const updateData = { ...req.body };
+
+        // Safe date parsing for project fields
+        ['startDate', 'endDate', 'deadline'].forEach(field => {
+            if (updateData[field]) {
+                const parsedDate = new Date(updateData[field]);
+                if (!isNaN(parsedDate.getTime())) {
+                    updateData[field] = parsedDate;
+                } else {
+                    delete updateData[field]; // ignore invalid date
+                }
+            }
+        });
+
         if (documentPaths.length > 0) {
             // Append documents instead of overwriting
-            updateData.$push = { documents: { $each: documentPaths } };
+            if (!updateData.documents) updateData.documents = [];
+            updateData.documents.push(...documentPaths);
         }
 
         const updatedProject = await ClientProject.findByIdAndUpdate(projectId, updateData, { new: true });
@@ -122,7 +140,7 @@ exports.editProject = async (req, res) => {
 exports.editMeeting = async (req, res) => {
     try {
         const { projectId, meetingId } = req.params;
-        const { title, description } = req.body;
+        const { title, description, date } = req.body;
 
         const project = await ClientProject.findById(projectId);
         if (!project) return res.status(404).json({ success: false, message: "Project not found" });
@@ -130,12 +148,30 @@ exports.editMeeting = async (req, res) => {
         const meeting = project.meetings.id(meetingId);
         if (!meeting) return res.status(404).json({ success: false, message: "Meeting not found" });
 
+        // Update title and description
         if (title) meeting.title = title;
         if (description) meeting.description = description;
 
+        // Update date safely
+        if (date) {
+            let parsedDate = new Date(date);
+            if (isNaN(parsedDate.getTime())) {
+                const parts = date.includes("-") ? date.split("-") : date.split("/");
+                if (parts.length === 3) {
+                    parsedDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00.000Z`);
+                }
+            }
+
+            if (!isNaN(parsedDate.getTime())) {
+                meeting.date = parsedDate;
+            } else {
+                return res.status(400).json({ success: false, message: "Invalid date format" });
+            }
+        }
+
+        // Update documents if uploaded
         const documentPaths = extractDocumentPaths(req.files);
         if (documentPaths.length > 0) {
-            // Append new documents to existing
             meeting.documents.push(...documentPaths);
         }
 
