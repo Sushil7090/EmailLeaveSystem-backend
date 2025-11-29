@@ -1,83 +1,66 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-const emailDataSchema = new mongoose.Schema({
-    employee: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-        required: false,
+const emailSchema = new mongoose.Schema(
+  {
+    employeeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Employee",
+      required: true,
     },
-    employeeName: {
-        type: String,
-        required: true,
-    },
-    employeeEmail: {
-        type: String,
-        required: true,
-        lowercase: true,
-    },
+
     subject: {
-        type: String,
-        required: true,
+      type: String,
+      required: true,
     },
-    leaveReason: {
-        type: String,
-        required: true,
+
+    message: {
+      type: String,
+      required: true,
     },
+
+    fromDate: {
+      type: Date,
+      required: true,
+    },
+
+    toDate: {
+      type: Date,
+      required: true,
+    },
+
     leaveType: {
-        type: String,
-        default: "Other",
+      type: String,
+      enum: ["Sick Leave", "Casual Leave", "Paid Leave", "Unpaid Leave"],
+      required: true,
     },
-    startDate: {
-        type: Date,
-    },
-    endDate: {
-        type: Date,
-    },
+
     status: {
-        type: String,
-        enum: ["Pending", "Approved", "Rejected"],
-        default: "Pending",
+      type: String,
+      enum: ["Pending", "Approved", "Rejected"],
+      default: "Pending",
     },
-    adminRemarks: {
-        type: String,
-        default: "",
-    },
-    reviewedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User", // admin who approved/rejected
-    },
-    reviewedAt: {
-        type: Date,
-    },
-    rawEmailId: {
-        type: String,
-        unique: true
-    },
-    attachments: [
-        {
-            filename: { type: String, required: true },
-            mimetype: { type: String, required: true },
-            size: { type: Number },
-            path: { type: String, required: true },
-            uploadedAt: { type: Date, default: Date.now }
-        }
-    ],
-    receivedAt: {
-        type: Date,
-        default: Date.now,
-    },
-    updatedAt: {
-        type: Date,
-        default: Date.now,
-    }
-});
 
-// Auto-update the updatedAt timestamp on each save
-emailDataSchema.pre('save', function (next) {
-    this.updatedAt = new Date();
-    next();
-});
+    // Added: Reason why admin rejected the request
+    rejectionReason: {
+      type: String,
+      default: "",
+    },
 
-const emailModel = mongoose.model("EmailData", emailDataSchema);
+    // Added: How many times employee has resubmitted
+    submissionCount: {
+      type: Number,
+      default: 0, // First submission → 0 resubmits
+    },
 
-module.exports = emailModel;
+    // Added: For tracking original request on resubmission
+    originalRequestId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+module.exports = mongoose.model("EmailRequest", emailSchema);
