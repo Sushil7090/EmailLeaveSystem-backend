@@ -164,3 +164,116 @@ module.exports.cancelMyLeaveRequestEmail = async function (req, res) {
         return res.status(500).json({ message: err.message });
     }
 };
+
+
+// ------------------ RESUBMIT REJECTED REQUEST ------------------
+module.exports.resubmitLeaveRequestEmail = async function (req, res) {
+    try {
+        const employeeId = req.user?._id;
+        const { id } = req.params;
+        const { subject, leaveReason, leaveType, startDate, endDate } = req.body;
+
+        if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
+
+        // Find original rejected request
+        const originalRequest = await emailModel.findById(id);
+        
+        if (!originalRequest) {
+            return res.status(404).json({ message: 'Original request not found' });
+        }
+
+        // Check ownership
+        if (String(originalRequest.employeeId) !== String(employeeId)) {
+            return res.status(403).json({ message: 'Forbidden' });
+        }
+
+        // Check if rejected
+        if (originalRequest.status !== 'Rejected') {
+            return res.status(400).json({ message: 'Can only resubmit rejected requests' });
+        }
+
+        // Check submission limit
+        if (originalRequest.submissionCount >= 3) {
+            return res.status(400).json({ 
+                message: 'Maximum submission limit (3) reached. Please contact HR.' 
+            });
+        }
+
+        // REQUIRED FIELDS CHECK
+        if (!subject || !leaveReason || !leaveType || !startDate || !endDate) {
+            return res.status(400).json({ message: 'All fields are required' });
+        }
+
+        // STRICT SUBJECT CHECK
+        if (subject !== REQUIRED_SUBJECT) {
+            return res.status(400).json({
+                message: `Subject must be exactly '${REQUIRED_SUBJECT}'`
+            });
+        }
+
+        // LEAVE TYPE VALIDATION
+        if (!ALLOWED_LEAVE_TYPES.includes(leaveType)) {
+            return res.status(400).json({
+                message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}`
+            });
+        }
+
+        // DATE VALIDATION
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+
+        if (isNaN(start) || isNaN(end) || end < start) {
+            return res.status(400).json({ message: 'Invalid date range' });
+        }
+
+        // UNIQUE RAW EMAIL ID
+        const rawEmailId =
+            `resubmit-${String(employeeId)}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+
+        // EMPLOYEE NAME BUILD
+        const employeeName =
+            `${req.user.fullname.firstname} ${req.user.fullname.middlename} ${req.user.fullname.lastname}`
+                .replace(/\s+/g, ' ')
+                .trim();
+
+        // ATTACHMENTS
+        const attachments = Array.isArray(req.files)
+            ? req.files.map(f => ({
+                filename: f.originalname,
+                mimetype: f.mimetype,
+                size: f.size,
+                path: `/uploads/${f.filename}`,
+                uploadedAt: new Date()
+            }))
+            : [];
+
+        // CREATE NEW REQUEST WITH INCREMENTED SUBMISSION COUNT
+        const record = new emailModel({
+            employeeId,
+            employeeName,
+            employeeEmail: req.user.email,
+            subject,
+            leaveReason,
+            leaveType,
+            startDate: start,
+            endDate: end,
+            rawEmailId,
+            attachments,
+            submissionCount: originalRequest.submissionCount + 1,
+            originalRequestId: originalRequest._id,
+            receivedAt: new Date(),
+            updatedAt: new Date()
+        });
+
+        await record.save();
+
+        return res.status(201).json({
+            message: 'Leave request resubmitted successfully',
+            email: record,
+            attemptsLeft: 3 - record.submissionCount
+        });
+
+    } catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+};

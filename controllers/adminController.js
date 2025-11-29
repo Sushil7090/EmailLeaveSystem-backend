@@ -1,11 +1,8 @@
 const emailModel = require('../models/emailModel');
 const { sendEmail } = require('../services/emailService');
 
-// Constants
 const REQUIRED_SUBJECT = 'Leave Request Application';
 const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Paid Leave", "Unpaid Leave"];
-
-// --------------------- Helper Functions ---------------------
 
 function formatDate(date) {
     if (!date) return '';
@@ -42,23 +39,19 @@ function buildRejectionTemplate(item, adminName, rejectionReason) {
     return { subject, text, html };
 }
 
-// --------------------- Admin Controllers ---------------------
-
-// List all leave requests (optionally filter by status)
 module.exports.listLeaveRequests = async function (req, res) {
     try {
         const { status } = req.query;
         const filter = {};
         if (status && ["Pending", "Approved", "Rejected"].includes(status)) filter.status = status;
 
-        const items = await emailModel.find(filter).sort({ createdAt: -1 }).populate('employeeId', 'fullname email');
+        const items = await emailModel.find(filter).sort({ receivedAt: -1 }).populate('employeeId', 'fullname email');
         return res.status(200).json({ emails: items });
     } catch (err) {
         return res.status(500).json({ message: err.message });
     }
 };
 
-// Get single leave request by ID
 module.exports.getLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
@@ -70,7 +63,6 @@ module.exports.getLeaveRequest = async function (req, res) {
     }
 };
 
-// Approve leave request
 module.exports.approveLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
@@ -98,7 +90,6 @@ module.exports.approveLeaveRequest = async function (req, res) {
     }
 };
 
-// Reject leave request
 module.exports.rejectLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
@@ -114,6 +105,7 @@ module.exports.rejectLeaveRequest = async function (req, res) {
 
         item.status = 'Rejected';
         item.rejectionReason = rejectionReason.trim();
+        item.submissionCount += 1;
         await item.save();
 
         try {
@@ -133,7 +125,6 @@ module.exports.rejectLeaveRequest = async function (req, res) {
     }
 };
 
-// Get leave summary stats
 module.exports.summaryStats = async function (req, res) {
     try {
         const [pending, approved, rejected] = await Promise.all([
@@ -147,7 +138,6 @@ module.exports.summaryStats = async function (req, res) {
     }
 };
 
-// Send feedback email to employee
 module.exports.sendFeedbackToEmployee = async function (req, res) {
     try {
         const { toEmail, subject, message } = req.body;
@@ -166,7 +156,6 @@ module.exports.sendFeedbackToEmployee = async function (req, res) {
     }
 };
 
-// Get employees on leave today
 module.exports.getEmployeesOnLeaveToday = async function (req, res) {
     try {
         const today = new Date();
@@ -174,17 +163,17 @@ module.exports.getEmployeesOnLeaveToday = async function (req, res) {
 
         const employeesOnLeave = await emailModel.find({
             status: 'Approved',
-            fromDate: { $lte: today },
-            toDate: { $gte: today }
-        }).select('employeeId leaveType fromDate toDate').populate('employeeId', 'fullname');
+            startDate: { $lte: today },
+            endDate: { $gte: today }
+        }).select('employeeId leaveType startDate endDate').populate('employeeId', 'fullname');
 
         const formattedEmployees = employeesOnLeave.map(employee => ({
             name: employee.employeeId?.fullname ? `${employee.employeeId.fullname.firstname} ${employee.employeeId.fullname.lastname}` : 'Unknown',
             type: employee.leaveType === 'Sick Leave' ? 'SL' : 
                   employee.leaveType === 'Casual Leave' ? 'CL' : 
                   employee.leaveType === 'Paid Leave' ? 'PL' : 'UL',
-            fromDate: employee.fromDate,
-            toDate: employee.toDate
+            startDate: employee.startDate,
+            endDate: employee.endDate
         }));
 
         return res.status(200).json({ employees: formattedEmployees });
@@ -193,7 +182,6 @@ module.exports.getEmployeesOnLeaveToday = async function (req, res) {
     }
 };
 
-// Get upcoming leaves
 module.exports.getUpcomingLeaves = async function (req, res) {
     try {
         const today = new Date();
@@ -204,24 +192,24 @@ module.exports.getUpcomingLeaves = async function (req, res) {
 
         const upcomingLeaves = await emailModel.find({
             status: 'Approved',
-            fromDate: { 
+            startDate: { 
                 $gte: today,
                 $lte: thirtyDaysFromNow
             }
-        }).select('employeeId leaveType fromDate toDate')
+        }).select('employeeId leaveType startDate endDate')
         .populate('employeeId', 'fullname')
-        .sort({ fromDate: 1 })
+        .sort({ startDate: 1 })
         .limit(10);
 
         const formattedLeaves = upcomingLeaves.map(leave => ({
             name: leave.employeeId?.fullname ? `${leave.employeeId.fullname.firstname} ${leave.employeeId.fullname.lastname}` : 'Unknown',
-            date: leave.fromDate.toLocaleDateString('en-US', { 
+            date: leave.startDate.toLocaleDateString('en-US', { 
                 month: 'short', 
                 day: 'numeric' 
             }),
             type: leave.leaveType,
-            fromDate: leave.fromDate,
-            toDate: leave.toDate
+            startDate: leave.startDate,
+            endDate: leave.endDate
         }));
 
         return res.status(200).json({ leaves: formattedLeaves });
@@ -230,7 +218,6 @@ module.exports.getUpcomingLeaves = async function (req, res) {
     }
 };
 
-// Get calendar data for a specific month
 module.exports.getCalendarData = async function (req, res) {
     try {
         const { year, month } = req.query;
@@ -246,17 +233,17 @@ module.exports.getCalendarData = async function (req, res) {
             status: 'Approved',
             $or: [
                 {
-                    fromDate: { $lte: endOfMonth },
-                    toDate: { $gte: startOfMonth }
+                    startDate: { $lte: endOfMonth },
+                    endDate: { $gte: startOfMonth }
                 }
             ]
-        }).select('employeeId leaveType fromDate toDate').populate('employeeId', 'fullname');
+        }).select('employeeId leaveType startDate endDate').populate('employeeId', 'fullname');
 
         const calendarData = leavesInMonth.map(leave => ({
             employeeName: leave.employeeId?.fullname ? `${leave.employeeId.fullname.firstname} ${leave.employeeId.fullname.lastname}` : 'Unknown',
             leaveType: leave.leaveType,
-            fromDate: leave.fromDate,
-            toDate: leave.toDate,
+            startDate: leave.startDate,
+            endDate: leave.endDate,
             type: leave.leaveType === 'Sick Leave' ? 'SL' : 
                   leave.leaveType === 'Casual Leave' ? 'CL' : 
                   leave.leaveType === 'Paid Leave' ? 'PL' : 'UL'
