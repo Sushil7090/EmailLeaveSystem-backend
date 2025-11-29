@@ -1,66 +1,102 @@
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
 
-const emailSchema = new mongoose.Schema(
-  {
-    employeeId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Employee",
-      required: true,
+const emailDataSchema = new mongoose.Schema({
+    employee: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: false,
     },
-
+    employeeName: {
+        type: String,
+        required: true,
+    },
+    employeeEmail: {
+        type: String,
+        required: true,
+        lowercase: true,
+    },
     subject: {
-      type: String,
-      required: true,
+        type: String,
+        required: true,
     },
-
-    message: {
-      type: String,
-      required: true,
+    leaveReason: {
+        type: String,
+        required: true,
     },
-
-    fromDate: {
-      type: Date,
-      required: true,
-    },
-
-    toDate: {
-      type: Date,
-      required: true,
-    },
-
     leaveType: {
-      type: String,
-      enum: ["Sick Leave", "Casual Leave", "Paid Leave", "Unpaid Leave"],
-      required: true,
+        type: String,
+        default: "Other",
     },
-
+    startDate: {
+        type: Date,
+    },
+    endDate: {
+        type: Date,
+    },
     status: {
-      type: String,
-      enum: ["Pending", "Approved", "Rejected"],
-      default: "Pending",
+        type: String,
+        enum: ["Pending", "Approved", "Rejected"],
+        default: "Pending",
     },
 
-    // Added: Reason why admin rejected the request
+    // ✅ New field (Why admin rejected)
     rejectionReason: {
-      type: String,
-      default: "",
+        type: String,
+        default: "",
     },
 
-    // Added: How many times employee has resubmitted
+    // ✅ New field (How many resubmissions)
     submissionCount: {
-      type: Number,
-      default: 0, // First submission → 0 resubmits
+        type: Number,
+        default: 0,
     },
 
-    // Added: For tracking original request on resubmission
+    // ✅ New field (Track first/original request)
     originalRequestId: {
-      type: mongoose.Schema.Types.ObjectId,
-      default: null,
+        type: mongoose.Schema.Types.ObjectId,
+        default: null,
     },
-  },
-  {
-    timestamps: true,
-  }
-);
 
-module.exports = mongoose.model("EmailRequest", emailSchema);
+    adminRemarks: {
+        type: String,
+        default: "",
+    },
+    reviewedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+    },
+    reviewedAt: {
+        type: Date,
+    },
+    rawEmailId: {
+        type: String,
+        unique: true
+    },
+    attachments: [
+        {
+            filename: { type: String, required: true },
+            mimetype: { type: String, required: true },
+            size: { type: Number },
+            path: { type: String, required: true },
+            uploadedAt: { type: Date, default: Date.now }
+        }
+    ],
+    receivedAt: {
+        type: Date,
+        default: Date.now,
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now,
+    }
+});
+
+// Auto-update updatedAt on save
+emailDataSchema.pre('save', function (next) {
+    this.updatedAt = new Date();
+    next();
+});
+
+const emailModel = mongoose.model("EmailData", emailDataSchema);
+
+module.exports = emailModel;
