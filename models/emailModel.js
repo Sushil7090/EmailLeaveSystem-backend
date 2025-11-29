@@ -7,6 +7,13 @@ const emailDataSchema = new mongoose.Schema({
         required: false,
     },
 
+    // ⭐ Added for admin controller compatibility
+    employeeId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: false,
+    },
+
     employeeName: {
         type: String,
         required: true,
@@ -87,7 +94,6 @@ const emailDataSchema = new mongoose.Schema({
     },
 
     // ⭐ ADDITIONAL FIELDS START ⭐
-
     rejectionReason: {
         type: String,
         default: "",
@@ -102,7 +108,6 @@ const emailDataSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         default: null,
     },
-
     // ⭐ ADDITIONAL FIELDS END ⭐
 });
 
