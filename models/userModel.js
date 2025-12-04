@@ -10,22 +10,11 @@ const crypto = require("crypto");
 // ---------------------------
 const userSchema = new mongoose.Schema({
   fullname: {
-    firstname: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    middlename: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    lastname: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+    firstname: { type: String, required: true, trim: true },
+    middlename: { type: String, required: true, trim: true },
+    lastname: { type: String, required: true, trim: true },
   },
+
   email: {
     type: String,
     required: true,
@@ -37,6 +26,7 @@ const userSchema = new mongoose.Schema({
       message: "Invalid email format",
     },
   },
+
   mobile: {
     type: String,
     required: true,
@@ -45,13 +35,13 @@ const userSchema = new mongoose.Schema({
     validate: {
       validator: (value) => {
         const input = (value || "").trim();
-        if (validator.isMobilePhone(input, "any", { strictMode: true }))
-          return true;
+        if (validator.isMobilePhone(input, "any", { strictMode: true })) return true;
         return /^\+?[1-9]\d{9,14}$/.test(input);
       },
       message: "Invalid mobile number",
     },
   },
+
   password: {
     type: String,
     required: true,
@@ -68,33 +58,35 @@ const userSchema = new mongoose.Schema({
       message: "Password is not strong enough",
     },
   },
+
   role: {
     type: String,
     enum: ["employee", "admin"],
     default: "employee",
   },
-  department: {
-    type: String,
-    required: true,
-  },
+
   leaveBalance: {
     medical: { type: Number, default: 10 },
     others: { type: Number, default: 10 },
     usedMedical: { type: Number, default: 0 },
     usedOthers: { type: Number, default: 0 },
   },
+
   profilePhoto: {
     type: String,
     default: null,
   },
+
   passwordResetToken: {
     type: String,
     select: false,
   },
+
   passwordResetExpires: {
     type: Date,
     select: false,
   },
+
   createdAt: {
     type: Date,
     default: Date.now,
@@ -158,7 +150,7 @@ userSchema.methods.createPasswordResetToken = function () {
     .createHash("sha256")
     .update(resetToken)
     .digest("hex");
-  this.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+  this.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
   return resetToken;
 };
 
@@ -187,7 +179,7 @@ userSchema.methods.comparePassword = async function (password) {
 };
 
 // ---------------------------
-// STATIC: HASH HELPER
+// STATIC HASH HELPER
 // ---------------------------
 userSchema.statics.hashPassword = async function (password) {
   return await bcrypt.hash(password, 10);

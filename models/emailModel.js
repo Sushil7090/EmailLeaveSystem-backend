@@ -37,7 +37,8 @@ const emailDataSchema = new mongoose.Schema({
 
     leaveType: {
         type: String,
-        default: "Other",
+        enum: ["Sick Leave", "Casual Leave", "Emergency Leave"],
+        required: true,
     },
 
     startDate: {

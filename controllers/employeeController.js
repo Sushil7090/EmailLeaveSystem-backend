@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const emailModel = require('../models/emailModel');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
-const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Paid Leave", "Other"];
+const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
 
 // ------------------ CREATE LEAVE REQUEST ------------------
 module.exports.createLeaveRequestEmail = async function (req, res) {
@@ -12,26 +12,22 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
 
         if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
 
-        // REQUIRED FIELDS CHECK
         if (!subject || !leaveReason || !leaveType || !startDate || !endDate) {
             return res.status(400).json({ message: 'All fields are required' });
         }
 
-        // STRICT SUBJECT CHECK
         if (subject !== REQUIRED_SUBJECT) {
             return res.status(400).json({
                 message: `Subject must be exactly '${REQUIRED_SUBJECT}'`
             });
         }
 
-        // LEAVE TYPE VALIDATION
         if (!ALLOWED_LEAVE_TYPES.includes(leaveType)) {
             return res.status(400).json({
                 message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}`
             });
         }
 
-        // DATE VALIDATION
         const start = new Date(startDate);
         const end = new Date(endDate);
 
@@ -39,17 +35,14 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
-        // UNIQUE RAW EMAIL ID
         const rawEmailId =
             `form-${String(employeeId)}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
 
-        // EMPLOYEE NAME BUILD
         const employeeName =
             `${req.user.fullname.firstname} ${req.user.fullname.middlename} ${req.user.fullname.lastname}`
                 .replace(/\s+/g, ' ')
                 .trim();
 
-        // ATTACHMENTS
         const attachments = Array.isArray(req.files)
             ? req.files.map(f => ({
                 filename: f.originalname,
@@ -60,9 +53,8 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
             }))
             : [];
 
-        // CREATE DB RECORD
         const record = new emailModel({
-            employeeId, // MATCHING MODEL FIELD
+            employeeId,
             employeeName,
             employeeEmail: req.user.email,
             subject,
@@ -96,7 +88,10 @@ module.exports.listMyLeaveRequestEmails = async function (req, res) {
 
         if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
 
-        const items = await emailModel.find({ employeeId }).sort({ receivedAt: -1 });
+        const items = await emailModel
+            .find({ employeeId })
+            .populate("reviewedBy", "fullname email role")
+            .sort({ receivedAt: -1 });
 
         return res.status(200).json({ emails: items });
 
@@ -114,7 +109,10 @@ module.exports.getMyLeaveRequestEmail = async function (req, res) {
 
         if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
 
-        const item = await emailModel.findById(id);
+        const item = await emailModel
+            .findById(id)
+            .populate("reviewedBy", "fullname email role");
+
         if (!item) return res.status(404).json({ message: 'Record not found' });
 
         if (String(item.employeeId) !== String(employeeId)) {
@@ -175,50 +173,42 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
 
         if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
 
-        // Find original rejected request
         const originalRequest = await emailModel.findById(id);
-        
+
         if (!originalRequest) {
             return res.status(404).json({ message: 'Original request not found' });
         }
 
-        // Check ownership
         if (String(originalRequest.employeeId) !== String(employeeId)) {
             return res.status(403).json({ message: 'Forbidden' });
         }
 
-        // Check if rejected
         if (originalRequest.status !== 'Rejected') {
             return res.status(400).json({ message: 'Can only resubmit rejected requests' });
         }
 
-        // Check submission limit
         if (originalRequest.submissionCount >= 3) {
-            return res.status(400).json({ 
-                message: 'Maximum submission limit (3) reached. Please contact HR.' 
+            return res.status(400).json({
+                message: 'Maximum submission limit (3) reached. Please contact HR.'
             });
         }
 
-        // REQUIRED FIELDS CHECK
         if (!subject || !leaveReason || !leaveType || !startDate || !endDate) {
             return res.status(400).json({ message: 'All fields are required' });
         }
 
-        // STRICT SUBJECT CHECK
         if (subject !== REQUIRED_SUBJECT) {
             return res.status(400).json({
                 message: `Subject must be exactly '${REQUIRED_SUBJECT}'`
             });
         }
 
-        // LEAVE TYPE VALIDATION
         if (!ALLOWED_LEAVE_TYPES.includes(leaveType)) {
             return res.status(400).json({
                 message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}`
             });
         }
 
-        // DATE VALIDATION
         const start = new Date(startDate);
         const end = new Date(endDate);
 
@@ -226,17 +216,14 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
-        // UNIQUE RAW EMAIL ID
         const rawEmailId =
             `resubmit-${String(employeeId)}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
 
-        // EMPLOYEE NAME BUILD
         const employeeName =
             `${req.user.fullname.firstname} ${req.user.fullname.middlename} ${req.user.fullname.lastname}`
                 .replace(/\s+/g, ' ')
                 .trim();
 
-        // ATTACHMENTS
         const attachments = Array.isArray(req.files)
             ? req.files.map(f => ({
                 filename: f.originalname,
@@ -247,7 +234,6 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             }))
             : [];
 
-        // CREATE NEW REQUEST WITH INCREMENTED SUBMISSION COUNT
         const record = new emailModel({
             employeeId,
             employeeName,
