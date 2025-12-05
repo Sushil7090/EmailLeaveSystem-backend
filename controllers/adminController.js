@@ -76,38 +76,35 @@ module.exports.getLeaveRequest = async function (req, res) {
     }
 };
 
+// -------------------- APPROVE --------------------
 module.exports.approveLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email');
+            .populate('employeeId', 'fullname email')
+            .populate('reviewedBy', 'fullname email role'); // ✅ added
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
-
-        // ❌ Admin cannot approve their own leave
         if (item.employeeId?._id.toString() === req.user._id.toString()) {
-            return res.status(403).json({
-                message: "Admins cannot approve their own leave request"
-            });
+            return res.status(403).json({ message: "Admins cannot approve their own leave request" });
         }
-
         if (item.status !== 'Pending') 
             return res.status(400).json({ message: 'Only pending records can be approved' });
 
         item.status = 'Approved';
+        item.adminRemarks = 'Approved by ' + req.user.fullname.firstname;
+        item.reviewedBy = req.user._id;
+        item.reviewedAt = new Date();
         await item.save();
 
         try {
-            const adminName =
-                req.user?.fullname
-                    ? `${req.user.fullname.firstname} ${req.user.fullname.lastname}`.trim()
-                    : 'Admin';
+            const adminName = req.user?.fullname
+                ? `${req.user.fullname.firstname} ${req.user.fullname.lastname}`.trim()
+                : 'Admin';
 
             const { subject, text, html } = buildApprovalTemplate(item, adminName);
-
             if (!item.employeeId?.email) throw new Error('Employee email not found');
-
             await sendEmail({ to: item.employeeId.email, subject, text, html });
 
             return res.status(200).json({ 
@@ -117,7 +114,6 @@ module.exports.approveLeaveRequest = async function (req, res) {
             });
         } catch (mailErr) {
             console.error('Failed to send approval email:', mailErr);
-
             return res.status(200).json({
                 message: 'Leave request approved (email failed to send)',
                 email: item,
@@ -129,6 +125,7 @@ module.exports.approveLeaveRequest = async function (req, res) {
     }
 };
 
+// -------------------- REJECT --------------------
 module.exports.rejectLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
@@ -140,39 +137,31 @@ module.exports.rejectLeaveRequest = async function (req, res) {
 
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email');
+            .populate('employeeId', 'fullname email')
+            .populate('reviewedBy', 'fullname email role'); // ✅ added
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
-
-        // ❌ Admin cannot reject their own leave
         if (item.employeeId?._id.toString() === req.user._id.toString()) {
-            return res.status(403).json({
-                message: "Admins cannot reject their own leave request"
-            });
+            return res.status(403).json({ message: "Admins cannot reject their own leave request" });
         }
-
         if (item.status !== 'Pending')
             return res.status(400).json({ message: 'Only pending records can be rejected' });
 
         item.status = 'Rejected';
         item.rejectionReason = rejectionReason.trim();
+        item.adminRemarks = 'Rejected by ' + req.user.fullname.firstname;
+        item.reviewedBy = req.user._id;
+        item.reviewedAt = new Date();
         item.submissionCount += 1;
         await item.save();
 
         try {
-            const adminName =
-                req.user?.fullname
-                    ? `${req.user.fullname.firstname} ${req.user.fullname.lastname}`.trim()
-                    : 'Admin';
+            const adminName = req.user?.fullname
+                ? `${req.user.fullname.firstname} ${req.user.fullname.lastname}`.trim()
+                : 'Admin';
 
-            const { subject, text, html } = buildRejectionTemplate(
-                item,
-                adminName,
-                rejectionReason
-            );
-
+            const { subject, text, html } = buildRejectionTemplate(item, adminName, rejectionReason);
             if (!item.employeeId?.email) throw new Error('Employee email not found');
-
             await sendEmail({ to: item.employeeId.email, subject, text, html });
 
             return res.status(200).json({
@@ -182,7 +171,6 @@ module.exports.rejectLeaveRequest = async function (req, res) {
             });
         } catch (mailErr) {
             console.error('Failed to send rejection email:', mailErr);
-
             return res.status(200).json({
                 message: 'Leave request rejected (email failed to send)',
                 email: item,
@@ -194,6 +182,8 @@ module.exports.rejectLeaveRequest = async function (req, res) {
     }
 };
 
+
+// -------------------- SUMMARY & OTHER FUNCTIONS --------------------
 module.exports.summaryStats = async function (req, res) {
     try {
         const [pending, approved, rejected] = await Promise.all([
