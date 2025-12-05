@@ -53,7 +53,7 @@ module.exports.listLeaveRequests = async function (req, res) {
         const items = await emailModel
             .find(filter)
             .sort({ receivedAt: -1 })
-            .populate('employeeId', 'fullname email');
+            .populate('employeeId', 'fullname email role'); // ✅ role added
 
         return res.status(200).json({ emails: items });
     } catch (err) {
@@ -66,7 +66,7 @@ module.exports.getLeaveRequest = async function (req, res) {
         const { id } = req.params;
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email');
+            .populate('employeeId', 'fullname email role'); // ✅ role added
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
 
@@ -82,8 +82,8 @@ module.exports.approveLeaveRequest = async function (req, res) {
         const { id } = req.params;
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email')
-            .populate('reviewedBy', 'fullname email role'); // ✅ added
+            .populate('employeeId', 'fullname email role') // ✅ role added
+            .populate('reviewedBy', 'fullname email role');
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
         if (item.employeeId?._id.toString() === req.user._id.toString()) {
@@ -93,7 +93,7 @@ module.exports.approveLeaveRequest = async function (req, res) {
             return res.status(400).json({ message: 'Only pending records can be approved' });
 
         item.status = 'Approved';
-        item.adminRemarks = 'Approved by ' + req.user.fullname.firstname;
+        item.adminRemarks = `Approved by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`; // ✅ full name
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
         await item.save();
@@ -137,8 +137,8 @@ module.exports.rejectLeaveRequest = async function (req, res) {
 
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email')
-            .populate('reviewedBy', 'fullname email role'); // ✅ added
+            .populate('employeeId', 'fullname email role') // ✅ role added
+            .populate('reviewedBy', 'fullname email role');
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
         if (item.employeeId?._id.toString() === req.user._id.toString()) {
@@ -149,7 +149,7 @@ module.exports.rejectLeaveRequest = async function (req, res) {
 
         item.status = 'Rejected';
         item.rejectionReason = rejectionReason.trim();
-        item.adminRemarks = 'Rejected by ' + req.user.fullname.firstname;
+        item.adminRemarks = `Rejected by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`; // ✅ full name
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
         item.submissionCount += 1;
@@ -181,7 +181,6 @@ module.exports.rejectLeaveRequest = async function (req, res) {
         return res.status(500).json({ message: err.message });
     }
 };
-
 
 // -------------------- SUMMARY & OTHER FUNCTIONS --------------------
 module.exports.summaryStats = async function (req, res) {
