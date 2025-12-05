@@ -187,7 +187,12 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Can only resubmit rejected requests' });
         }
 
-        if (originalRequest.submissionCount >= 3) {
+        // ⭐ FIX: पहिले originalRequest चा count वाढव
+        originalRequest.submissionCount += 1;
+        await originalRequest.save();
+
+        // ⭐ FIX: आता check कर > 3 (म्हणजे 4 किंवा त्यापेक्षा जास्त)
+        if (originalRequest.submissionCount > 3) {
             return res.status(400).json({
                 message: 'Maximum submission limit (3) reached. Please contact HR.'
             });
@@ -245,7 +250,7 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             endDate: end,
             rawEmailId,
             attachments,
-            submissionCount: originalRequest.submissionCount + 1,
+            submissionCount: originalRequest.submissionCount, // ⭐ FIX: हा पण बदलला
             originalRequestId: originalRequest._id,
             receivedAt: new Date(),
             updatedAt: new Date()
@@ -256,7 +261,7 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
         return res.status(201).json({
             message: 'Leave request resubmitted successfully',
             email: record,
-            attemptsLeft: 3 - record.submissionCount
+            attemptsLeft: 3 - originalRequest.submissionCount
         });
 
     } catch (err) {
