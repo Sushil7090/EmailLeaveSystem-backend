@@ -101,9 +101,9 @@ const emailDataSchema = new mongoose.Schema({
     },
 
     submissionCount: {
-        type: Number,
-        default: 0,
-    },
+    type: Number,
+    default: 1,  // ⭐ Initial request = 1st attempt
+},
 
     originalRequestId: {
         type: mongoose.Schema.Types.ObjectId,

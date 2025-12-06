@@ -171,33 +171,37 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
         const { id } = req.params;
         const { subject, leaveReason, leaveType, startDate, endDate } = req.body;
 
-        if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
-
-        const originalRequest = await emailModel.findById(id);
-
-        if (!originalRequest) {
-            return res.status(404).json({ message: 'Original request not found' });
+        // 1️⃣ Check login
+        if (!employeeId) {
+            return res.status(401).json({ message: 'Unauthorized' });
         }
 
-        if (String(originalRequest.employeeId) !== String(employeeId)) {
+        // 2️⃣ Find existing request
+        const item = await emailModel.findById(id);
+        if (!item) {
+            return res.status(404).json({ message: 'Request not found' });
+        }
+
+        // 3️⃣ Check owner
+        if (String(item.employeeId) !== String(employeeId)) {
             return res.status(403).json({ message: 'Forbidden' });
         }
 
-        if (originalRequest.status !== 'Rejected') {
-            return res.status(400).json({ message: 'Can only resubmit rejected requests' });
-        }
-
-        // ⭐ FIX: पहिले originalRequest चा count वाढव
-        originalRequest.submissionCount += 1;
-        await originalRequest.save();
-
-        // ⭐ FIX: आता check कर > 3 (म्हणजे 4 किंवा त्यापेक्षा जास्त)
-        if (originalRequest.submissionCount > 3) {
+        // 4️⃣ Only rejected requests can be resubmitted
+        if (item.status !== 'Rejected') {
             return res.status(400).json({
-                message: 'Maximum submission limit (3) reached. Please contact HR.'
+                message: 'Only rejected requests can be resubmitted'
             });
         }
 
+        // 5️⃣ Not more than 3 attempts
+        if (item.submissionCount >= 3) {
+            return res.status(400).json({
+                message: 'Maximum resubmission limit (3) reached. Please contact HR.'
+            });
+        }
+
+        // 6️⃣ Validation
         if (!subject || !leaveReason || !leaveType || !startDate || !endDate) {
             return res.status(400).json({ message: 'All fields are required' });
         }
@@ -221,47 +225,41 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
-        const rawEmailId =
-            `resubmit-${String(employeeId)}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+        // 7️⃣ UPDATE SAME RECORD (NO NEW RECORD CREATED)
+        item.subject = subject;
+        item.leaveReason = leaveReason;
+        item.leaveType = leaveType;
+        item.startDate = start;
+        item.endDate = end;
 
-        const employeeName =
-            `${req.user.fullname.firstname} ${req.user.fullname.middlename} ${req.user.fullname.lastname}`
-                .replace(/\s+/g, ' ')
-                .trim();
+        item.status = 'Pending';                 // ⭐ Make it Pending again
+        item.submissionCount += 1;               // ⭐ Increase attempts count
 
-        const attachments = Array.isArray(req.files)
-            ? req.files.map(f => ({
-                filename: f.originalname,
-                mimetype: f.mimetype,
-                size: f.size,
-                path: `/uploads/${f.filename}`,
+        // Clear past review info
+        item.adminRemarks = '';
+        item.reviewedBy = null;
+        item.reviewedAt = null;
+
+        item.updatedAt = new Date();
+
+        // 8️⃣ Attachments update (if new ones uploaded)
+        if (Array.isArray(req.files) && req.files.length > 0) {
+            item.attachments = req.files.map(file => ({
+                filename: file.originalname,
+                mimetype: file.mimetype,
+                size: file.size,
+                path: `/uploads/${file.filename}`,
                 uploadedAt: new Date()
-            }))
-            : [];
+            }));
+        }
 
-        const record = new emailModel({
-            employeeId,
-            employeeName,
-            employeeEmail: req.user.email,
-            subject,
-            leaveReason,
-            leaveType,
-            startDate: start,
-            endDate: end,
-            rawEmailId,
-            attachments,
-            submissionCount: originalRequest.submissionCount, // ⭐ FIX: हा पण बदलला
-            originalRequestId: originalRequest._id,
-            receivedAt: new Date(),
-            updatedAt: new Date()
-        });
+        // 9️⃣ Save updated request
+        await item.save();
 
-        await record.save();
-
-        return res.status(201).json({
+        return res.status(200).json({
             message: 'Leave request resubmitted successfully',
-            email: record,
-            attemptsLeft: 3 - originalRequest.submissionCount
+            attemptsLeft: 3 - item.submissionCount,
+            email: item
         });
 
     } catch (err) {
