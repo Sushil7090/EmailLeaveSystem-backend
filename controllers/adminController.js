@@ -55,22 +55,9 @@ module.exports.listLeaveRequests = async function (req, res) {
             .find(filter)
             .sort({ receivedAt: -1 })
             .populate('employeeId', 'fullname email role');
+        // ✅ सगळे fields येतील including rejectionReason
 
-        const formattedItems = items.map(item => ({
-            id: item._id,
-            employeeName: item.employeeName,
-            employeeEmail: item.employeeEmail,
-            leaveType: item.leaveType,
-            startDate: item.startDate,
-            endDate: item.endDate,
-            status: item.status,
-            rejectionReason: item.rejectionReason, // ✅ Admin can see this
-            adminRemarks: item.adminRemarks,
-            reviewedBy: item.reviewedBy,
-            reviewedAt: item.reviewedAt
-        }));
-
-        return res.status(200).json({ emails: formattedItems });
+        return res.status(200).json({ emails: items });
     } catch (err) {
         return res.status(500).json({ message: err.message });
     }
@@ -86,21 +73,8 @@ module.exports.getLeaveRequest = async function (req, res) {
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
 
-        return res.status(200).json({ 
-            email: {
-                id: item._id,
-                employeeName: item.employeeName,
-                employeeEmail: item.employeeEmail,
-                leaveType: item.leaveType,
-                startDate: item.startDate,
-                endDate: item.endDate,
-                status: item.status,
-                rejectionReason: item.rejectionReason, // ✅ Admin can see this
-                adminRemarks: item.adminRemarks,
-                reviewedBy: item.reviewedBy,
-                reviewedAt: item.reviewedAt
-            }
-        });
+        return res.status(200).json({ email: item });
+        // ✅ सगळे fields येतील including rejectionReason
     } catch (err) {
         return res.status(500).json({ message: err.message });
     }
@@ -178,7 +152,7 @@ module.exports.rejectLeaveRequest = async function (req, res) {
             return res.status(400).json({ message: 'Only pending records can be rejected' });
 
         item.status = 'Rejected';
-        item.rejectionReason = rejectionReason.trim(); // ✅ Admin can see this
+        item.rejectionReason = rejectionReason.trim(); // ✅ यहाँ save होतो
         item.adminRemarks = `Rejected by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`;
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
