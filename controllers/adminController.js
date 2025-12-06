@@ -152,7 +152,6 @@ module.exports.rejectLeaveRequest = async function (req, res) {
         item.adminRemarks = `Rejected by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`; // ✅ full name
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
-        item.submissionCount += 1;
         await item.save();
 
         try {
