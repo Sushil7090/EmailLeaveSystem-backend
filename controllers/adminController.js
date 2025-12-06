@@ -2,7 +2,7 @@ const emailModel = require('../models/emailModel');
 const { sendEmail } = require('../services/emailService');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
-const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"]; // ✅ Updated
+const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
 
 function formatDate(date) {
     if (!date) return '';
@@ -44,6 +44,7 @@ function buildRejectionTemplate(item, adminName, rejectionReason) {
     return { subject, text, html };
 }
 
+// -------------------- LIST LEAVE REQUESTS --------------------
 module.exports.listLeaveRequests = async function (req, res) {
     try {
         const { status } = req.query;
@@ -53,36 +54,65 @@ module.exports.listLeaveRequests = async function (req, res) {
         const items = await emailModel
             .find(filter)
             .sort({ receivedAt: -1 })
-            .populate('employeeId', 'fullname email role'); // ✅ role added
+            .populate('employeeId', 'fullname email role');
 
-        return res.status(200).json({ emails: items });
+        const formattedItems = items.map(item => ({
+            id: item._id,
+            employeeName: item.employeeName,
+            employeeEmail: item.employeeEmail,
+            leaveType: item.leaveType,
+            startDate: item.startDate,
+            endDate: item.endDate,
+            status: item.status,
+            rejectionReason: item.rejectionReason, // ✅ Admin can see this
+            adminRemarks: item.adminRemarks,
+            reviewedBy: item.reviewedBy,
+            reviewedAt: item.reviewedAt
+        }));
+
+        return res.status(200).json({ emails: formattedItems });
     } catch (err) {
         return res.status(500).json({ message: err.message });
     }
 };
 
+// -------------------- GET SINGLE LEAVE REQUEST --------------------
 module.exports.getLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email role'); // ✅ role added
+            .populate('employeeId', 'fullname email role');
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
 
-        return res.status(200).json({ email: item });
+        return res.status(200).json({ 
+            email: {
+                id: item._id,
+                employeeName: item.employeeName,
+                employeeEmail: item.employeeEmail,
+                leaveType: item.leaveType,
+                startDate: item.startDate,
+                endDate: item.endDate,
+                status: item.status,
+                rejectionReason: item.rejectionReason, // ✅ Admin can see this
+                adminRemarks: item.adminRemarks,
+                reviewedBy: item.reviewedBy,
+                reviewedAt: item.reviewedAt
+            }
+        });
     } catch (err) {
         return res.status(500).json({ message: err.message });
     }
 };
 
-// -------------------- APPROVE --------------------
+// -------------------- APPROVE LEAVE REQUEST --------------------
 module.exports.approveLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email role') // ✅ role added
+            .populate('employeeId', 'fullname email role')
             .populate('reviewedBy', 'fullname email role');
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
@@ -93,7 +123,7 @@ module.exports.approveLeaveRequest = async function (req, res) {
             return res.status(400).json({ message: 'Only pending records can be approved' });
 
         item.status = 'Approved';
-        item.adminRemarks = `Approved by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`; // ✅ full name
+        item.adminRemarks = `Approved by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`;
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
         await item.save();
@@ -125,7 +155,7 @@ module.exports.approveLeaveRequest = async function (req, res) {
     }
 };
 
-// -------------------- REJECT --------------------
+// -------------------- REJECT LEAVE REQUEST --------------------
 module.exports.rejectLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
@@ -137,7 +167,7 @@ module.exports.rejectLeaveRequest = async function (req, res) {
 
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email role') // ✅ role added
+            .populate('employeeId', 'fullname email role')
             .populate('reviewedBy', 'fullname email role');
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
@@ -148,8 +178,8 @@ module.exports.rejectLeaveRequest = async function (req, res) {
             return res.status(400).json({ message: 'Only pending records can be rejected' });
 
         item.status = 'Rejected';
-        item.rejectionReason = rejectionReason.trim();
-        item.adminRemarks = `Rejected by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`; // ✅ full name
+        item.rejectionReason = rejectionReason.trim(); // ✅ Admin can see this
+        item.adminRemarks = `Rejected by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`;
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
         await item.save();
@@ -189,7 +219,6 @@ module.exports.summaryStats = async function (req, res) {
             emailModel.countDocuments({ status: 'Approved' }),
             emailModel.countDocuments({ status: 'Rejected' }),
         ]);
-
         return res.status(200).json({ pending, approved, rejected });
     } catch (err) {
         return res.status(500).json({ message: err.message });
@@ -201,9 +230,7 @@ module.exports.sendFeedbackToEmployee = async function (req, res) {
         const { toEmail, subject, message } = req.body;
 
         if (!toEmail || !subject || !message)
-            return res
-                .status(400)
-                .json({ message: 'toEmail, subject and message are required' });
+            return res.status(400).json({ message: 'toEmail, subject and message are required' });
 
         const html = `
             <p>${message.replace(/\n/g, '<br/>')}</p>
@@ -237,7 +264,6 @@ module.exports.getEmployeesOnLeaveToday = async function (req, res) {
             name: employee.employeeId?.fullname
                 ? `${employee.employeeId.fullname.firstname} ${employee.employeeId.fullname.lastname}`
                 : 'Unknown',
-
             type:
                 employee.leaveType === 'Sick Leave'
                     ? 'SL'
@@ -246,7 +272,6 @@ module.exports.getEmployeesOnLeaveToday = async function (req, res) {
                     : employee.leaveType === 'Emergency Leave'
                     ? 'EL'
                     : 'NA',
-
             startDate: employee.startDate,
             endDate: employee.endDate,
         }));
@@ -328,7 +353,6 @@ module.exports.getCalendarData = async function (req, res) {
             leaveType: leave.leaveType,
             startDate: leave.startDate,
             endDate: leave.endDate,
-
             type:
                 leave.leaveType === 'Sick Leave'
                     ? 'SL'
