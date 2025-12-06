@@ -54,8 +54,8 @@ module.exports.listLeaveRequests = async function (req, res) {
         const items = await emailModel
             .find(filter)
             .sort({ receivedAt: -1 })
-            .populate('employeeId', 'fullname email role');
-        // ✅ सगळे fields येतील including rejectionReason
+            .populate('employeeId', 'fullname email role')
+            .populate('rejectionHistory.rejectedBy', 'fullname email role'); // ⭐ populated history.rejectedBy
 
         return res.status(200).json({ emails: items });
     } catch (err) {
@@ -69,12 +69,12 @@ module.exports.getLeaveRequest = async function (req, res) {
         const { id } = req.params;
         const item = await emailModel
             .findById(id)
-            .populate('employeeId', 'fullname email role');
+            .populate('employeeId', 'fullname email role')
+            .populate('rejectionHistory.rejectedBy', 'fullname email role'); // ⭐ ADDED populate for history
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
 
         return res.status(200).json({ email: item });
-        // ✅ सगळे fields येतील including rejectionReason
     } catch (err) {
         return res.status(500).json({ message: err.message });
     }
@@ -151,11 +151,26 @@ module.exports.rejectLeaveRequest = async function (req, res) {
         if (item.status !== 'Pending')
             return res.status(400).json({ message: 'Only pending records can be rejected' });
 
+        // Update main fields
         item.status = 'Rejected';
-        item.rejectionReason = rejectionReason.trim(); // ✅ यहाँ save होतो
+        item.rejectionReason = rejectionReason.trim();
         item.adminRemarks = `Rejected by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`;
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
+
+        // ⭐⭐ PUSH TO rejectionHistory BEFORE SAVE
+        item.rejectionHistory.push({
+            rejectedAt: new Date(),
+            rejectedBy: req.user._id,
+            rejectionReason: rejectionReason.trim(),
+            adminRemarks: item.adminRemarks,
+            attemptNumber: item.submissionCount,
+            employeeLeaveReason: item.leaveReason,
+            leaveType: item.leaveType,
+            startDate: item.startDate,
+            endDate: item.endDate
+        });
+
         await item.save();
 
         try {

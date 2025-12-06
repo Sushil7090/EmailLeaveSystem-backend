@@ -80,7 +80,6 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
     }
 };
 
-
 // ------------------ LIST MY LEAVE REQUESTS ------------------
 module.exports.listMyLeaveRequestEmails = async function (req, res) {
     try {
@@ -91,6 +90,7 @@ module.exports.listMyLeaveRequestEmails = async function (req, res) {
         const items = await emailModel
             .find({ employeeId })
             .populate("reviewedBy", "fullname email role")
+            .populate('rejectionHistory.rejectedBy', 'fullname email') // ⭐ Added
             .sort({ receivedAt: -1 });
 
         return res.status(200).json({ emails: items });
@@ -99,7 +99,6 @@ module.exports.listMyLeaveRequestEmails = async function (req, res) {
         return res.status(500).json({ message: err.message });
     }
 };
-
 
 // ------------------ GET SINGLE REQUEST ------------------
 module.exports.getMyLeaveRequestEmail = async function (req, res) {
@@ -111,7 +110,8 @@ module.exports.getMyLeaveRequestEmail = async function (req, res) {
 
         const item = await emailModel
             .findById(id)
-            .populate("reviewedBy", "fullname email role");
+            .populate("reviewedBy", "fullname email role")
+            .populate('rejectionHistory.rejectedBy', 'fullname email'); // ⭐ Added
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
 
@@ -125,7 +125,6 @@ module.exports.getMyLeaveRequestEmail = async function (req, res) {
         return res.status(500).json({ message: err.message });
     }
 };
-
 
 // ------------------ CANCEL REQUEST ------------------
 module.exports.cancelMyLeaveRequestEmail = async function (req, res) {
@@ -163,7 +162,6 @@ module.exports.cancelMyLeaveRequestEmail = async function (req, res) {
     }
 };
 
-
 // ------------------ RESUBMIT REJECTED REQUEST ------------------
 module.exports.resubmitLeaveRequestEmail = async function (req, res) {
     try {
@@ -171,51 +169,33 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
         const { id } = req.params;
         const { subject, leaveReason, leaveType, startDate, endDate } = req.body;
 
-        // 1️⃣ Check login
-        if (!employeeId) {
-            return res.status(401).json({ message: 'Unauthorized' });
-        }
+        if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
 
-        // 2️⃣ Find existing request
         const item = await emailModel.findById(id);
-        if (!item) {
-            return res.status(404).json({ message: 'Request not found' });
-        }
+        if (!item) return res.status(404).json({ message: 'Request not found' });
 
-        // 3️⃣ Check owner
         if (String(item.employeeId) !== String(employeeId)) {
             return res.status(403).json({ message: 'Forbidden' });
         }
 
-        // 4️⃣ Only rejected requests can be resubmitted
         if (item.status !== 'Rejected') {
-            return res.status(400).json({
-                message: 'Only rejected requests can be resubmitted'
-            });
+            return res.status(400).json({ message: 'Only rejected requests can be resubmitted' });
         }
 
-        // 5️⃣ Not more than 3 attempts
         if (item.submissionCount >= 3) {
-            return res.status(400).json({
-                message: 'Maximum resubmission limit (3) reached. Please contact HR.'
-            });
+            return res.status(400).json({ message: 'Maximum resubmission limit (3) reached. Please contact HR.' });
         }
 
-        // 6️⃣ Validation
         if (!subject || !leaveReason || !leaveType || !startDate || !endDate) {
             return res.status(400).json({ message: 'All fields are required' });
         }
 
         if (subject !== REQUIRED_SUBJECT) {
-            return res.status(400).json({
-                message: `Subject must be exactly '${REQUIRED_SUBJECT}'`
-            });
+            return res.status(400).json({ message: `Subject must be exactly '${REQUIRED_SUBJECT}'` });
         }
 
         if (!ALLOWED_LEAVE_TYPES.includes(leaveType)) {
-            return res.status(400).json({
-                message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}`
-            });
+            return res.status(400).json({ message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}` });
         }
 
         const start = new Date(startDate);
@@ -225,24 +205,24 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
-        // 7️⃣ UPDATE SAME RECORD (NO NEW RECORD CREATED)
+        // Update record
         item.subject = subject;
         item.leaveReason = leaveReason;
         item.leaveType = leaveType;
         item.startDate = start;
         item.endDate = end;
 
-        item.status = 'Pending';                 // ⭐ Make it Pending again
-        item.submissionCount += 1;               // ⭐ Increase attempts count
+        item.status = 'Pending';
+        item.submissionCount += 1;
 
-        // Clear past review info
+        // Clear past review info & previous rejection reason
         item.adminRemarks = '';
         item.reviewedBy = null;
         item.reviewedAt = null;
+        item.rejectionReason = ''; // ⭐ Added
 
         item.updatedAt = new Date();
 
-        // 8️⃣ Attachments update (if new ones uploaded)
         if (Array.isArray(req.files) && req.files.length > 0) {
             item.attachments = req.files.map(file => ({
                 filename: file.originalname,
@@ -253,7 +233,6 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             }));
         }
 
-        // 9️⃣ Save updated request
         await item.save();
 
         return res.status(200).json({

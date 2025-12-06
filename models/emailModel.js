@@ -7,7 +7,6 @@ const emailDataSchema = new mongoose.Schema({
         required: false,
     },
 
-    // ⭐ Added for admin controller compatibility
     employeeId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
@@ -62,7 +61,7 @@ const emailDataSchema = new mongoose.Schema({
 
     reviewedBy: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "User", // admin who approved/rejected
+        ref: "User",
     },
 
     reviewedAt: {
@@ -101,14 +100,41 @@ const emailDataSchema = new mongoose.Schema({
     },
 
     submissionCount: {
-    type: Number,
-    default: 1,  // ⭐ Initial request = 1st attempt
-},
+        type: Number,
+        default: 1,
+    },
 
     originalRequestId: {
         type: mongoose.Schema.Types.ObjectId,
         default: null,
     },
+
+    // ⭐⭐⭐ NEW: Full Rejection History ⭐⭐⭐
+    rejectionHistory: [
+        {
+            rejectedAt: { type: Date, required: true },
+            rejectedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "User",
+                required: true
+            },
+            rejectionReason: { type: String, required: true },
+            adminRemarks: { type: String, default: "" },
+            attemptNumber: { type: Number, required: true },
+
+            // ⭐ Employee info snapshot
+            employeeLeaveReason: { type: String, required: true },
+            leaveType: { 
+                type: String, 
+                enum: ["Sick Leave", "Casual Leave", "Emergency Leave"],
+                required: true 
+            },
+            startDate: { type: Date, required: true },
+            endDate: { type: Date, required: true }
+        }
+    ],
+    // ⭐⭐⭐ END NEW FIELD ⭐⭐⭐
+
     // ⭐ ADDITIONAL FIELDS END ⭐
 });
 
