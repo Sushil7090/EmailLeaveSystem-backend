@@ -1,0 +1,99 @@
+name: Deploy Node Backend to AWS Lightsail
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout code
+      - uses: actions/checkout@v4
+
+      # Login to DockerHub
+      - name: Login to DockerHub
+        run: |
+          echo "${{ secrets.DOCKERHUB_PASSWORD }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      # Build Docker Image (Backend folder)
+      - name: Build Docker Image
+        run: docker build -t ${{ secrets.DOCKER_IMAGE_NAME }} ./Backend
+
+      # Push to DockerHub
+      - name: Push Docker Image
+        run: docker push ${{ secrets.DOCKER_IMAGE_NAME }}
+
+      # Install AWS CLI
+      - name: Install AWS CLI
+        uses: unfor19/install-aws-cli-action@v1
+
+      # Configure AWS Credentials
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # Deploy to AWS Lightsail
+      - name: Deploy to AWS Lightsail Instance
+        env:
+          INSTANCE_NAME: ${{ secrets.LIGHTSAIL_INSTANCE_NAME }}
+          IMAGE_NAME: ${{ secrets.DOCKER_IMAGE_NAME }}
+        run: |
+          # Fetch instance IP
+          INSTANCE_IP=$(aws lightsail get-instance --instance-name $INSTANCE_NAME --query 'instance.publicIpAddress' --output text)
+          echo "Lightsail IP = $INSTANCE_IP"
+
+          # Store SSH Key
+          echo "${{ secrets.LIGHTSAIL_SSH_KEY }}" > lightsail.pem
+          chmod 600 lightsail.pem
+
+          # Create deployment script
+          cat > deploy.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
+          # Install Docker if not present
+          if ! command -v docker &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y docker.io
+            sudo systemctl enable docker
+            sudo systemctl start docker
+          fi
+
+          # DockerHub login
+          echo $2 | sudo docker login -u $3 --password-stdin
+
+          # Stop existing container
+          sudo docker stop node-backend || true
+          sudo docker rm node-backend || true
+
+          # Remove old image
+          sudo docker rmi $1 || true
+
+          # Pull latest image
+          sudo docker pull $1
+
+          # Start new container
+          sudo docker run -d \
+            --name node-backend \
+            --restart unless-stopped \
+            -p 5001:5001 \
+            --env-file /home/ubuntu/.env.production \
+            $1
+
+          echo "Deployment Completed Successfully!"
+          EOF
+
+          # Upload deploy script
+          scp -i lightsail.pem -o StrictHostKeyChecking=no deploy.sh ubuntu@$INSTANCE_IP:/home/ubuntu/deploy.sh
+
+          # Upload production .env (from GitHub secrets)
+          echo "${{ secrets.ENV_FILE }}" > .env.production
+          scp -i lightsail.pem -o StrictHostKeyChecking=no .env.production ubuntu@$INSTANCE_IP:/home/ubuntu/.env.production
+
+          # Run deploy script on server
+          ssh -i lightsail.pem -o StrictHostKeyChecking=no ubuntu@$INSTANCE_IP \
+            "chmod +x deploy.sh && ./deploy.sh $IMAGE_NAME ${{ secrets.DOCKERHUB_PASSWORD }} ${{ secrets.DOCKERHUB_USERNAME }}"

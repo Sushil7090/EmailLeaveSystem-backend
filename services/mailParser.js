@@ -1,44 +1,57 @@
 const { simpleParser } = require("mailparser");
 const Imap = require("imap");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const EmailData = require("../models/emailModel"); // import your EmailData schema
+const EmailData = require("../models/emailModel");
 
-// Gemini Init
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+/* ============================================
+   📌 Manual Extraction Function (Regex Based)
+   ============================================ */
+function extractAttributesManually(emailText) {
+    const lower = emailText.toLowerCase();
 
-// Extract attributes with Gemini
-async function extractAttributesWithGemini(emailText) {
-    const currentDate = new Date().toISOString().split("T")[0];
+    // Employee Name
+    let employeeName =
+        /name[:\-]?\s*([A-Za-z ]+)/i.exec(emailText)?.[1] ||
+        /i am ([A-Za-z ]+)/i.exec(emailText)?.[1] ||
+        "Unknown Employee";
 
-    const prompt = `
-Extract leave application details from the email below and return a single, clean JSON object.
+    employeeName = employeeName.trim();
 
-**Instructions:**
-1. Fields: employeeName, leaveReason, leaveType, startDate, endDate.
-2. Categorize leaveType: "Sick Leave", "Function/Event Leave", "Personal Leave", "Vacation".
-3. Resolve relative dates based on Current Date = ${currentDate}, format as YYYY-MM-DD.
-4. leaveReason should capture original text.
+    // Leave Reason
+    const leaveReason =
+        /reason[:\-]?\s*(.+)/i.exec(emailText)?.[1]?.trim() ||
+        emailText.slice(0, 200).trim();
 
-**Email:**
-\`\`\`
-${emailText}
-\`\`\`
-`;
+    // Leave Type Classification
+    let leaveType = "Other";
+    if (lower.includes("sick") || lower.includes("ill")) leaveType = "Sick Leave";
+    else if (lower.includes("function") || lower.includes("event")) leaveType = "Function/Event Leave";
+    else if (lower.includes("personal")) leaveType = "Personal Leave";
+    else if (lower.includes("vacation") || lower.includes("holiday")) leaveType = "Vacation";
 
-    const result = await model.generateContent(prompt);
-    let raw = result.response.text();
-    raw = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+    // Dates
+    const dateRegex = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/g;
+    const allDates = emailText.match(dateRegex);
 
-    try {
-        return JSON.parse(raw);
-    } catch (err) {
-        console.error("JSON parse error:", err, "\nRaw:", raw);
-        return {};
+    let startDate = null;
+    let endDate = null;
+
+    if (allDates && allDates.length >= 1) {
+        startDate = new Date(allDates[0]);
+        if (allDates.length >= 2) endDate = new Date(allDates[1]);
     }
+
+    return {
+        employeeName,
+        leaveReason,
+        leaveType,
+        startDate,
+        endDate,
+    };
 }
 
-// Process individual email
+/* ============================================
+   📌 Process Individual Email
+   ============================================ */
 async function processEmail(stream, messageId) {
     return new Promise((resolve, reject) => {
         simpleParser(stream, async (err, parsed) => {
@@ -54,16 +67,17 @@ async function processEmail(stream, messageId) {
             }
 
             try {
-                const extracted = await extractAttributesWithGemini(text);
+                // ⭐ Extract using our manual function
+                const extracted = extractAttributesManually(text);
 
                 const emailData = new EmailData({
-                    employeeName: extracted.employeeName || "Unknown Employee",
+                    employeeName: extracted.employeeName,
                     employeeEmail: from?.value?.[0]?.address || "unknown@example.com",
                     subject,
-                    leaveReason: extracted.leaveReason || "Not specified",
-                    leaveType: extracted.leaveType || "Other",
-                    startDate: extracted.startDate ? new Date(extracted.startDate) : null,
-                    endDate: extracted.endDate ? new Date(extracted.endDate) : null,
+                    leaveReason: extracted.leaveReason,
+                    leaveType: extracted.leaveType,
+                    startDate: extracted.startDate,
+                    endDate: extracted.endDate,
                     rawEmailId: messageId,
                     receivedAt: date,
                 });
@@ -83,7 +97,9 @@ async function processEmail(stream, messageId) {
     });
 }
 
-// Handle new emails
+/* ============================================
+   📌 Handle New Emails
+   ============================================ */
 function handleNewEmail(imap) {
     imap.openBox("INBOX", false, (err, box) => {
         if (err) return console.error("Error opening inbox:", err);
@@ -101,8 +117,13 @@ function handleNewEmail(imap) {
             fetch.on("message", (msg) => {
                 let messageId, stream;
 
-                msg.on("body", (bodyStream) => { stream = bodyStream; });
-                msg.on("attributes", (attrs) => { messageId = attrs.uid; });
+                msg.on("body", (bodyStream) => {
+                    stream = bodyStream;
+                });
+
+                msg.on("attributes", (attrs) => {
+                    messageId = attrs.uid;
+                });
 
                 msg.once("end", async () => {
                     if (stream && messageId) {
@@ -121,11 +142,13 @@ function handleNewEmail(imap) {
     });
 }
 
-// Start IMAP listener (exported function)
+/* ============================================
+   📌 Start IMAP Email Listener
+   ============================================ */
 function startEmailListener() {
     const imap = new Imap({
         user: process.env.EMAIL_USER,
-        password: process.env.EMAIL_PASS, // Gmail App Password if 2FA enabled
+        password: process.env.EMAIL_PASS,
         host: "imap.gmail.com",
         port: 993,
         tls: true,
@@ -140,24 +163,17 @@ function startEmailListener() {
 
             console.log("Inbox opened successfully");
 
-            // listen for new emails
             imap.on("mail", () => {
                 console.log("New email detected!");
                 handleNewEmail(imap);
             });
 
-            // check existing unseen emails at startup
             handleNewEmail(imap);
         });
     });
 
-    imap.once("error", (err) => {
-        console.error("IMAP connection error:", err);
-    });
-
-    imap.once("end", () => {
-        console.log("IMAP connection ended");
-    });
+    imap.once("error", (err) => console.error("IMAP connection error:", err));
+    imap.once("end", () => console.log("IMAP connection ended"));
 
     imap.connect();
 }
