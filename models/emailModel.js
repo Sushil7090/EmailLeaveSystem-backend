@@ -39,7 +39,22 @@ const emailDataSchema = new mongoose.Schema({
         enum: ["Sick Leave", "Casual Leave", "Emergency Leave"],
         required: true,
     },
+    
+    // ⭐⭐⭐ NEW: Half Day Support ⭐⭐⭐
+    leaveDuration: {
+        type: String,
+        enum: ["Full Day", "Half Day"],
+        default: "Full Day",
+        required: true
+    },
 
+    halfDayType: {
+        type: String,
+        enum: ["First Half", "Second Half", ""],
+        default: ""
+    },
+    // ⭐⭐⭐ END NEW ⭐⭐⭐
+    
     startDate: {
         type: Date,
     },
@@ -129,6 +144,20 @@ const emailDataSchema = new mongoose.Schema({
                 enum: ["Sick Leave", "Casual Leave", "Emergency Leave"],
                 required: true 
             },
+            
+            // ⭐⭐⭐ NEW: Half Day in History ⭐⭐⭐
+            leaveDuration: { 
+                type: String, 
+                enum: ["Full Day", "Half Day"], 
+                required: true 
+            },
+            halfDayType: { 
+                type: String, 
+                enum: ["First Half", "Second Half", ""], 
+                default: "" 
+            },
+            // ⭐⭐⭐ END NEW ⭐⭐⭐
+            
             startDate: { type: Date, required: true },
             endDate: { type: Date, required: true }
         }

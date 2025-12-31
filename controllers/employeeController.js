@@ -8,7 +8,7 @@ const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
 module.exports.createLeaveRequestEmail = async function (req, res) {
     try {
         const employeeId = req.user?._id;
-        const { subject, leaveReason, leaveType, startDate, endDate } = req.body;
+        const { subject, leaveReason, leaveType, startDate, endDate, leaveDuration, halfDayType } = req.body;
 
         if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
 
@@ -27,6 +27,16 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
                 message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}`
             });
         }
+
+        // ⭐⭐⭐ NEW: Half Day Validation ⭐⭐⭐
+        if (!leaveDuration || !["Full Day", "Half Day"].includes(leaveDuration)) {
+            return res.status(400).json({ message: 'leaveDuration must be "Full Day" or "Half Day"' });
+        }
+
+        if (leaveDuration === "Half Day" && (!halfDayType || !["First Half", "Second Half"].includes(halfDayType))) {
+            return res.status(400).json({ message: 'halfDayType is required for Half Day and must be "First Half" or "Second Half"' });
+        }
+        // ⭐⭐⭐ END NEW ⭐⭐⭐
 
         const start = new Date(startDate);
         const end = new Date(endDate);
@@ -60,6 +70,8 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
             subject,
             leaveReason,
             leaveType,
+            leaveDuration,  // ⭐ NEW
+            halfDayType: leaveDuration === "Half Day" ? halfDayType : "",  // ⭐ NEW
             startDate: start,
             endDate: end,
             rawEmailId,
@@ -167,7 +179,7 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
     try {
         const employeeId = req.user?._id;
         const { id } = req.params;
-        const { subject, leaveReason, leaveType, startDate, endDate } = req.body;
+        const { subject, leaveReason, leaveType, startDate, endDate, leaveDuration, halfDayType } = req.body;  // ⭐ ADDED
 
         if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
 
@@ -198,6 +210,16 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}` });
         }
 
+        // ⭐⭐⭐ NEW: Half Day Validation ⭐⭐⭐
+        if (!leaveDuration || !["Full Day", "Half Day"].includes(leaveDuration)) {
+            return res.status(400).json({ message: 'leaveDuration must be "Full Day" or "Half Day"' });
+        }
+
+        if (leaveDuration === "Half Day" && (!halfDayType || !["First Half", "Second Half"].includes(halfDayType))) {
+            return res.status(400).json({ message: 'halfDayType required for Half Day' });
+        }
+        // ⭐⭐⭐ END NEW ⭐⭐⭐
+
         const start = new Date(startDate);
         const end = new Date(endDate);
 
@@ -209,6 +231,8 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
         item.subject = subject;
         item.leaveReason = leaveReason;
         item.leaveType = leaveType;
+        item.leaveDuration = leaveDuration;  // ⭐ NEW
+        item.halfDayType = leaveDuration === "Half Day" ? halfDayType : "";  // ⭐ NEW
         item.startDate = start;
         item.endDate = end;
 

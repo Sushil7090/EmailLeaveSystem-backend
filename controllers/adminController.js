@@ -167,6 +167,8 @@ module.exports.rejectLeaveRequest = async function (req, res) {
             attemptNumber: item.submissionCount,
             employeeLeaveReason: item.leaveReason,
             leaveType: item.leaveType,
+            leaveDuration: item.leaveDuration,  // ⭐ NEW
+            halfDayType: item.halfDayType,      // ⭐ NEW
             startDate: item.startDate,
             endDate: item.endDate
         });
