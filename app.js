@@ -15,6 +15,12 @@ const path = require("path");
 // ⭐ NEW ROUTE ADDED HERE
 const clientProjectRoutes = require("./routes/clientProjectRoute");
 
+// ⭐⭐⭐ NEW: Leave Reminder Service ⭐⭐⭐
+const { startLeaveReminderScheduler } = require("./services/leaveReminderService");
+
+// ⭐⭐⭐ NEW: Holiday Reminder Service ⭐⭐⭐
+const { startHolidayReminderScheduler } = require("./services/holidayReminderService");
+
 // ==============================
 // 🧩 MongoDB Connection
 // ==============================
@@ -34,6 +40,29 @@ async function main() {
         "⚙️ Email listener is disabled. Set ENABLE_EMAIL=true in .env to enable it."
       );
     }
+
+    // ⭐⭐⭐ NEW: Start Leave Reminder Scheduler ⭐⭐⭐
+    if (process.env.ENABLE_LEAVE_REMINDERS === "true") {
+      console.log("🔔 Starting leave reminder scheduler...");
+      startLeaveReminderScheduler();
+    } else {
+      console.log(
+        "⚙️ Leave reminder scheduler is disabled. Set ENABLE_LEAVE_REMINDERS=true in .env to enable it."
+      );
+    }
+    // ⭐⭐⭐ END NEW ⭐⭐⭐
+
+    // ⭐⭐⭐ NEW: Start Holiday Reminder Scheduler ⭐⭐⭐
+    if (process.env.ENABLE_HOLIDAY_REMINDERS === "true") {
+      console.log("🎉 Starting holiday reminder scheduler...");
+      startHolidayReminderScheduler();
+    } else {
+      console.log(
+        "⚙️ Holiday reminder scheduler is disabled. Set ENABLE_HOLIDAY_REMINDERS=true in .env to enable it."
+      );
+    }
+    // ⭐⭐⭐ END NEW ⭐⭐⭐
+
   } catch (err) {
     console.error("❌ DB connection failed:", err);
   }
@@ -85,6 +114,10 @@ app.use(["/admin", "/api/admin"], adminRoutes);
 
 // ⭐ NEW CLIENT-PROJECT ROUTE ADDED
 app.use(["/client-project", "/api/client-project"], clientProjectRoutes);
+
+// ⭐ NEW HOLIDAY CALENDAR ROUTE ADDED
+const holidayRoutes = require("./routes/holidayRoutes");
+app.use(["/holidays", "/api/holidays"], holidayRoutes);
 
 console.log("[INFO] All routes registered successfully.");
 

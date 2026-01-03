@@ -359,3 +359,199 @@ module.exports.getCalendarData = async function (req, res) {
         return res.status(500).json({ message: err.message });
     }
 };
+
+// ==================== NEW CALENDAR EDIT FUNCTIONS ====================
+// Add these NEW functions to your existing adminController.js
+// Don't replace anything, just add these at the end
+
+// -------------------- EDIT LEAVE FROM CALENDAR --------------------
+module.exports.editLeaveFromCalendar = async function (req, res) {
+    try {
+        const { id } = req.params;
+        const { leaveType, startDate, endDate, leaveDuration, halfDayType, leaveReason } = req.body;
+
+        // Validation
+        if (!leaveType || !startDate || !endDate) {
+            return res.status(400).json({ message: 'leaveType, startDate, and endDate are required' });
+        }
+
+        const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
+        if (!ALLOWED_LEAVE_TYPES.includes(leaveType)) {
+            return res.status(400).json({ 
+                message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}` 
+            });
+        }
+
+        // Half day validation
+        if (leaveDuration && !["Full Day", "Half Day"].includes(leaveDuration)) {
+            return res.status(400).json({ 
+                message: 'leaveDuration must be "Full Day" or "Half Day"' 
+            });
+        }
+
+        if (leaveDuration === "Half Day" && (!halfDayType || !["First Half", "Second Half"].includes(halfDayType))) {
+            return res.status(400).json({ 
+                message: 'halfDayType is required for Half Day' 
+            });
+        }
+
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+
+        if (isNaN(start) || isNaN(end) || end < start) {
+            return res.status(400).json({ message: 'Invalid date range' });
+        }
+
+        // Find leave request
+        const item = await emailModel
+            .findById(id)
+            .populate('employeeId', 'fullname email role');
+
+        if (!item) {
+            return res.status(404).json({ message: 'Leave request not found' });
+        }
+
+        // Only allow editing approved leaves
+        if (item.status !== 'Approved') {
+            return res.status(400).json({ 
+                message: 'Only approved leaves can be edited from calendar' 
+            });
+        }
+
+        // Store old values for notification
+        const oldStartDate = item.startDate;
+        const oldEndDate = item.endDate;
+        const oldLeaveType = item.leaveType;
+
+        // Update leave details
+        item.leaveType = leaveType;
+        item.startDate = start;
+        item.endDate = end;
+        
+        if (leaveDuration) {
+            item.leaveDuration = leaveDuration;
+            item.halfDayType = leaveDuration === "Half Day" ? halfDayType : "";
+        }
+        
+        if (leaveReason) {
+            item.leaveReason = leaveReason;
+        }
+
+        item.adminRemarks = `Edited by Admin (${req.user.fullname.firstname} ${req.user.fullname.lastname}) on ${new Date().toLocaleDateString()}`;
+        item.updatedAt = new Date();
+
+        await item.save();
+
+        // Send notification email to employee
+        try {
+            const employeeEmail = item.employeeId?.email;
+            if (employeeEmail) {
+                const subject = 'Leave Request Updated by Admin';
+                const text = `Dear ${item.employeeName},\n\nYour approved leave has been updated by Admin.\n\nOld Details:\nType: ${oldLeaveType}\nFrom: ${oldStartDate.toLocaleDateString()}\nTo: ${oldEndDate.toLocaleDateString()}\n\nNew Details:\nType: ${item.leaveType}\nFrom: ${item.startDate.toLocaleDateString()}\nTo: ${item.endDate.toLocaleDateString()}\n\nRegards,\nAdmin`;
+                
+                const html = `
+                    <p>Dear ${item.employeeName},</p>
+                    <p>Your approved leave has been updated by Admin.</p>
+                    
+                    <h3>Old Details:</h3>
+                    <ul>
+                        <li><strong>Type:</strong> ${oldLeaveType}</li>
+                        <li><strong>From:</strong> ${oldStartDate.toLocaleDateString()}</li>
+                        <li><strong>To:</strong> ${oldEndDate.toLocaleDateString()}</li>
+                    </ul>
+                    
+                    <h3>New Details:</h3>
+                    <ul>
+                        <li><strong>Type:</strong> ${item.leaveType}</li>
+                        <li><strong>Duration:</strong> ${item.leaveDuration || 'Full Day'}</li>
+                        ${item.halfDayType ? `<li><strong>Half Day:</strong> ${item.halfDayType}</li>` : ''}
+                        <li><strong>From:</strong> ${item.startDate.toLocaleDateString()}</li>
+                        <li><strong>To:</strong> ${item.endDate.toLocaleDateString()}</li>
+                    </ul>
+                    
+                    <p>Regards,<br/>Admin</p>
+                `;
+
+                await sendEmail({ to: employeeEmail, subject, text, html });
+            }
+        } catch (emailErr) {
+            console.error('Failed to send update notification:', emailErr);
+        }
+
+        return res.status(200).json({
+            message: 'Leave updated successfully',
+            email: item
+        });
+
+    } catch (err) {
+        console.error('Error editing leave:', err);
+        return res.status(500).json({ message: err.message });
+    }
+};
+
+// -------------------- DELETE LEAVE FROM CALENDAR --------------------
+module.exports.deleteLeaveFromCalendar = async function (req, res) {
+    try {
+        const { id } = req.params;
+
+        const item = await emailModel
+            .findById(id)
+            .populate('employeeId', 'fullname email role');
+
+        if (!item) {
+            return res.status(404).json({ message: 'Leave request not found' });
+        }
+
+        // Only allow deleting approved leaves
+        if (item.status !== 'Approved') {
+            return res.status(400).json({ 
+                message: 'Only approved leaves can be deleted from calendar' 
+            });
+        }
+
+        // Store details before deletion
+        const employeeEmail = item.employeeId?.email;
+        const employeeName = item.employeeName;
+        const leaveType = item.leaveType;
+        const startDate = item.startDate;
+        const endDate = item.endDate;
+
+        // Delete the leave
+        await emailModel.findByIdAndDelete(id);
+
+        // Send notification email
+        try {
+            if (employeeEmail) {
+                const subject = 'Leave Request Cancelled by Admin';
+                const text = `Dear ${employeeName},\n\nYour approved leave has been cancelled by Admin.\n\nLeave Details:\nType: ${leaveType}\nFrom: ${startDate.toLocaleDateString()}\nTo: ${endDate.toLocaleDateString()}\n\nPlease contact HR for more information.\n\nRegards,\nAdmin`;
+                
+                const html = `
+                    <p>Dear ${employeeName},</p>
+                    <p>Your approved leave has been cancelled by Admin.</p>
+                    
+                    <h3>Cancelled Leave Details:</h3>
+                    <ul>
+                        <li><strong>Type:</strong> ${leaveType}</li>
+                        <li><strong>From:</strong> ${startDate.toLocaleDateString()}</li>
+                        <li><strong>To:</strong> ${endDate.toLocaleDateString()}</li>
+                    </ul>
+                    
+                    <p>Please contact HR for more information.</p>
+                    <p>Regards,<br/>Admin</p>
+                `;
+
+                await sendEmail({ to: employeeEmail, subject, text, html });
+            }
+        } catch (emailErr) {
+            console.error('Failed to send cancellation notification:', emailErr);
+        }
+
+        return res.status(200).json({
+            message: 'Leave deleted successfully'
+        });
+
+    } catch (err) {
+        console.error('Error deleting leave:', err);
+        return res.status(500).json({ message: err.message });
+    }
+};

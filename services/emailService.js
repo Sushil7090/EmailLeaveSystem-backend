@@ -23,7 +23,7 @@ function getTransporter() {
 
 async function sendEmail({ to, subject, html, text, cc, bcc, attachments }) {
     const transporter = getTransporter();
-    const fromAddress = `"DYP Company" <${process.env.EMAIL_USER}>`;
+    const fromAddress = `"QHills Technology Pvt. Ltd" <${process.env.EMAIL_USER}>`;
 
     const mailOptions = {
         from: fromAddress,
