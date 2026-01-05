@@ -53,66 +53,76 @@ async function checkAndSendHolidayReminders() {
 
         const employeeEmail = employee.email;
 
-        // Holiday HTML
-        const holidayListHTML = holidaysTomorrow.map(holiday => `
-          <div style="background-color:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:15px 0;border-radius:5px;">
-            <h3 style="margin:0 0 10px;color:#856404;">🎉 ${holiday.holidayName}</h3>
-            <p style="margin:5px 0;color:#856404;"><strong>Type:</strong> ${holiday.holidayType}</p>
-            <p style="margin:5px 0;color:#856404;">
-              <strong>Date:</strong> ${new Date(holiday.holidayDate).toLocaleDateString('en-IN', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-              })}
-            </p>
-            ${holiday.description ? `
-              <p style="margin:10px 0 5px;color:#856404;">
-                <strong>About:</strong> ${holiday.description}
-              </p>` : ''}
-          </div>
-        `).join('');
+        // Format holiday names
+        const holidayNames = holidaysTomorrow.map(h => h.holidayName).join(', ');
+        
+        // Format holiday types
+        const holidayTypes = [...new Set(holidaysTomorrow.map(h => h.holidayType))].join(', ');
+        
+        // Format date
+        const holidayDate = new Date(holidaysTomorrow[0].holidayDate).toLocaleDateString('en-IN', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
 
-        // Email content
+        // Email content - SIMPLE & PROFESSIONAL
         const emailContent = `
-          <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px;background:#f9f9f9;">
-            <div style="background:#FF6B6B;color:#fff;padding:20px;text-align:center;border-radius:5px 5px 0 0;">
-              <h2 style="margin:0;">🎊 Holiday Tomorrow!</h2>
-            </div>
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Holiday Notice</title>
+          </head>
+          <body style="margin:0;padding:20px;background:#ffffff;font-family:Arial,sans-serif;">
+              
+              <div style="max-width:700px;margin:auto;padding:40px;line-height:1.6;">
+                  
+                  <p style="margin:0 0 20px 0;font-size:15px;color:#000000;">
+                      Hello ${employeeName},
+                  </p>
 
-            <div style="background:#fff;padding:30px;border-radius:0 0 5px 5px;">
-              <p style="font-size:16px;color:#333;">
-                Dear <strong>${employeeName}</strong>,
-              </p>
+                  <p style="margin:0 0 20px 0;font-size:15px;color:#000000;">
+                      We would like to inform you that the office will remain closed tomorrow in observance of ${holidayNames} under QHills Technology Pvt. Ltd.
+                  </p>
 
-              <p style="font-size:16px;color:#333;">
-                This is a friendly reminder that <strong>tomorrow is a holiday</strong> and the office will be closed.
-              </p>
+                  <p style="margin:20px 0 5px 0;font-size:15px;color:#000000;">
+                      <strong>Date:</strong> ${holidayDate}
+                  </p>
+                  <p style="margin:0 0 30px 0;font-size:15px;color:#000000;">
+                      <strong>Type:</strong> ${holidayTypes}
+                  </p>
 
-              ${holidayListHTML}
+                  <p style="margin:20px 0 10px 0;font-size:15px;color:#000000;">
+                      All employees are requested to plan their work accordingly. Normal office operations will resume on the next working day.
+                  </p>
 
-              <div style="background:#d4edda;border-left:4px solid #28a745;padding:15px;margin:20px 0;border-radius:5px;">
-                <strong>✅ Enjoy your day off!</strong>
-                <ul style="margin-top:10px;">
-                  <li>No need to come to the office tomorrow</li>
-                  <li>See you on the next working day</li>
-                </ul>
+                  <p style="margin:30px 0 20px 0;font-size:15px;color:#000000;">
+                      We wish you a pleasant holiday.
+                  </p>
+
+                  <p style="margin:30px 0 5px 0;font-size:15px;color:#000000;">
+                      Regards,<br/>
+                      QHills Technology Pvt. Ltd.
+                  </p>
+
+                  <hr style="margin:40px 0 20px 0;border:none;border-top:1px solid #cccccc;" />
+
+                  <p style="margin:0;font-size:13px;color:#666666;line-height:1.5;">
+                      This is an automated email from the Leave Management System.
+                  </p>
+
               </div>
 
-              <p>Have a wonderful holiday! 🌟</p>
-
-              <hr />
-              <p style="font-size:12px;color:#999;">
-                This is an automated mail from <strong>QHills Technology Pvt. Ltd</strong><br/>
-                Leave Management System
-              </p>
-            </div>
-          </div>
+          </body>
+          </html>
         `;
 
         await sendEmail({
           to: employeeEmail,
-          subject: '🎊 Holiday Reminder: Office Closed Tomorrow',
+          subject: 'Holiday Notice: Office Closed Tomorrow',
           html: emailContent
         });
 
