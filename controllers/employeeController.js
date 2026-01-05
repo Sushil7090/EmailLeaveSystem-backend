@@ -4,8 +4,9 @@ const User = require('../models/userModel');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
 const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
+const MONTHLY_QUOTA_LIMIT = 1.5;  // ✅ UPDATED: 1 Full + 1 Half = 1.5 days
 
-// ⭐⭐⭐ HELPER FUNCTION: Check Monthly Quota ⭐⭐⭐
+// ⭐⭐⭐ HELPER FUNCTION: Check Monthly Quota (UPDATED) ⭐⭐⭐
 async function checkMonthlyQuota(employeeId) {
     const currentMonth = new Date().toISOString().slice(0, 7); // "2026-01"
     
@@ -14,7 +15,7 @@ async function checkMonthlyQuota(employeeId) {
 
     // Reset if new month
     if (user.currentMonth !== currentMonth) {
-        const unusedQuota = 1 - user.monthlyQuotaUsed;
+        const unusedQuota = MONTHLY_QUOTA_LIMIT - user.monthlyQuotaUsed;  // ✅ UPDATED: 1.5
         user.carryForwardDays = unusedQuota > 0 ? unusedQuota : 0;
         user.monthlyQuotaUsed = 0;
         user.currentMonth = currentMonth;
@@ -22,7 +23,7 @@ async function checkMonthlyQuota(employeeId) {
         await user.save();
     }
 
-    const totalAvailable = 1 + user.carryForwardDays;
+    const totalAvailable = MONTHLY_QUOTA_LIMIT + user.carryForwardDays;  // ✅ UPDATED: 1.5 + carry
     const remaining = totalAvailable - user.monthlyQuotaUsed;
 
     return {
@@ -72,13 +73,13 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
-        // ⭐⭐⭐ CHECK MONTHLY QUOTA ⭐⭐⭐
+        // ⭐⭐⭐ CHECK MONTHLY QUOTA (1.5 days) ⭐⭐⭐
         const quota = await checkMonthlyQuota(employeeId);
         const requestedDays = leaveDuration === "Full Day" ? 1 : 0.5;
 
         if (quota.remaining < requestedDays) {
             return res.status(400).json({ 
-                message: `Monthly limit exceeded! You have ${quota.remaining} day(s) remaining this month.`,
+                message: `Monthly limit exceeded! You have ${quota.remaining} day(s) remaining this month. Maximum 1.5 days per month (1 Full + 1 Half).`,  // ✅ UPDATED
                 quotaInfo: {
                     used: quota.used,
                     available: quota.available,
@@ -291,7 +292,7 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
 
         if (quota.remaining < requestedDays) {
             return res.status(400).json({ 
-                message: `Monthly limit exceeded! You have ${quota.remaining} day(s) remaining.`,
+                message: `Monthly limit exceeded! You have ${quota.remaining} day(s) remaining. Maximum 1.5 days per month (1 Full + 1 Half).`,  // ✅ UPDATED
                 quotaInfo: quota
             });
         }

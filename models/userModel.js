@@ -84,12 +84,12 @@ const userSchema = new mongoose.Schema({
     min: 0,
   },
 
-  // Monthly quota (1 full day OR 2 half days)
+  // Monthly quota (1 full day + 1 half day = 1.5 days)
   monthlyQuotaUsed: {
     type: Number,
     default: 0,
     min: 0,
-    max: 2,
+    max: 1.5,  // ✅ UPDATED: Changed from 2 to 1.5
   },
 
   currentMonth: {

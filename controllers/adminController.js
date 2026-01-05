@@ -4,6 +4,7 @@ const User = require('../models/userModel');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
 const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
+const MONTHLY_QUOTA_LIMIT = 1.5;  // ✅ UPDATED: 1 Full + 1 Half = 1.5 days
 
 function formatDate(date) {
     if (!date) return '';
@@ -100,7 +101,7 @@ module.exports.approveLeaveRequest = async function (req, res) {
         if (item.status !== 'Pending') 
             return res.status(400).json({ message: 'Only pending records can be approved' });
 
-        // ⭐⭐⭐ BALANCE DEDUCTION LOGIC START ⭐⭐⭐
+        // ⭐⭐⭐ BALANCE DEDUCTION LOGIC START (UPDATED) ⭐⭐⭐
         const user = await User.findById(item.employeeId._id);
         if (!user) return res.status(404).json({ message: 'Employee not found' });
 
@@ -108,7 +109,7 @@ module.exports.approveLeaveRequest = async function (req, res) {
         
         // Reset if new month
         if (user.currentMonth !== currentMonth) {
-            const unusedQuota = 1 - user.monthlyQuotaUsed;
+            const unusedQuota = MONTHLY_QUOTA_LIMIT - user.monthlyQuotaUsed;  // ✅ UPDATED: 1.5
             user.carryForwardDays = unusedQuota > 0 ? unusedQuota : 0;
             user.monthlyQuotaUsed = 0;
             user.currentMonth = currentMonth;
@@ -116,12 +117,12 @@ module.exports.approveLeaveRequest = async function (req, res) {
         }
 
         const requestedDays = item.leaveDays || (item.leaveDuration === "Full Day" ? 1 : 0.5);
-        const totalAvailable = 1 + user.carryForwardDays;
+        const totalAvailable = MONTHLY_QUOTA_LIMIT + user.carryForwardDays;  // ✅ UPDATED: 1.5 + carry
 
         // Check monthly quota
         if (user.monthlyQuotaUsed + requestedDays > totalAvailable) {
             return res.status(400).json({ 
-                message: `Monthly quota exceeded. Employee has only ${totalAvailable - user.monthlyQuotaUsed} day(s) remaining.`,
+                message: `Monthly quota exceeded. Employee has only ${totalAvailable - user.monthlyQuotaUsed} day(s) remaining. Maximum 1.5 days per month allowed (1 Full + 1 Half).`,  // ✅ UPDATED
                 quotaInfo: {
                     used: user.monthlyQuotaUsed,
                     available: totalAvailable,
