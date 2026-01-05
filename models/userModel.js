@@ -65,12 +65,64 @@ const userSchema = new mongoose.Schema({
     default: "employee",
   },
 
-  leaveBalance: {
-    medical: { type: Number, default: 10 },
-    others: { type: Number, default: 10 },
-    usedMedical: { type: Number, default: 0 },
-    usedOthers: { type: Number, default: 0 },
+  // ⭐⭐⭐ LEAVE BALANCE SYSTEM (CL + SL) ⭐⭐⭐
+  clBalance: {
+    type: Number,
+    default: 20,
+    min: 0,
   },
+
+  slBalance: {
+    type: Number,
+    default: 5,
+    min: 0,
+  },
+
+  totalPaidLeaves: {
+    type: Number,
+    default: 25,
+    min: 0,
+  },
+
+  // Monthly quota (1 full day OR 2 half days)
+  monthlyQuotaUsed: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 2,
+  },
+
+  currentMonth: {
+    type: String,
+    default: function () {
+      return new Date().toISOString().slice(0, 7); // YYYY-MM
+    },
+  },
+
+  carryForwardDays: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
+  lastMonthlyReset: {
+    type: Date,
+    default: Date.now,
+  },
+
+  leaveHistory: {
+    type: [
+      {
+        leaveId: { type: mongoose.Schema.Types.ObjectId, ref: "EmailData" },
+        month: { type: String },
+        days: { type: Number },
+        type: { type: String },
+        appliedAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+  },
+  // ⭐⭐⭐ END LEAVE SYSTEM ⭐⭐⭐
 
   profilePhoto: {
     type: String,

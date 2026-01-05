@@ -1,8 +1,37 @@
 const crypto = require('crypto');
 const emailModel = require('../models/emailModel');
+const User = require('../models/userModel');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
 const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
+
+// ⭐⭐⭐ HELPER FUNCTION: Check Monthly Quota ⭐⭐⭐
+async function checkMonthlyQuota(employeeId) {
+    const currentMonth = new Date().toISOString().slice(0, 7); // "2026-01"
+    
+    const user = await User.findById(employeeId);
+    if (!user) throw new Error('User not found');
+
+    // Reset if new month
+    if (user.currentMonth !== currentMonth) {
+        const unusedQuota = 1 - user.monthlyQuotaUsed;
+        user.carryForwardDays = unusedQuota > 0 ? unusedQuota : 0;
+        user.monthlyQuotaUsed = 0;
+        user.currentMonth = currentMonth;
+        user.lastMonthlyReset = new Date();
+        await user.save();
+    }
+
+    const totalAvailable = 1 + user.carryForwardDays;
+    const remaining = totalAvailable - user.monthlyQuotaUsed;
+
+    return {
+        used: user.monthlyQuotaUsed,
+        available: totalAvailable,
+        remaining: remaining,
+        canApply: remaining > 0
+    };
+}
 
 // ------------------ CREATE LEAVE REQUEST ------------------
 module.exports.createLeaveRequestEmail = async function (req, res) {
@@ -28,7 +57,6 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
             });
         }
 
-        // ⭐⭐⭐ NEW: Half Day Validation ⭐⭐⭐
         if (!leaveDuration || !["Full Day", "Half Day"].includes(leaveDuration)) {
             return res.status(400).json({ message: 'leaveDuration must be "Full Day" or "Half Day"' });
         }
@@ -36,13 +64,27 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
         if (leaveDuration === "Half Day" && (!halfDayType || !["First Half", "Second Half"].includes(halfDayType))) {
             return res.status(400).json({ message: 'halfDayType is required for Half Day and must be "First Half" or "Second Half"' });
         }
-        // ⭐⭐⭐ END NEW ⭐⭐⭐
 
         const start = new Date(startDate);
         const end = new Date(endDate);
 
         if (isNaN(start) || isNaN(end) || end < start) {
             return res.status(400).json({ message: 'Invalid date range' });
+        }
+
+        // ⭐⭐⭐ CHECK MONTHLY QUOTA ⭐⭐⭐
+        const quota = await checkMonthlyQuota(employeeId);
+        const requestedDays = leaveDuration === "Full Day" ? 1 : 0.5;
+
+        if (quota.remaining < requestedDays) {
+            return res.status(400).json({ 
+                message: `Monthly limit exceeded! You have ${quota.remaining} day(s) remaining this month.`,
+                quotaInfo: {
+                    used: quota.used,
+                    available: quota.available,
+                    remaining: quota.remaining
+                }
+            });
         }
 
         const rawEmailId =
@@ -70,12 +112,13 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
             subject,
             leaveReason,
             leaveType,
-            leaveDuration,  // ⭐ NEW
-            halfDayType: leaveDuration === "Half Day" ? halfDayType : "",  // ⭐ NEW
+            leaveDuration,
+            halfDayType: leaveDuration === "Half Day" ? halfDayType : "",
             startDate: start,
             endDate: end,
             rawEmailId,
             attachments,
+            leaveDays: requestedDays, // ⭐ NEW
             receivedAt: new Date(),
             updatedAt: new Date()
         });
@@ -84,7 +127,8 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
 
         return res.status(201).json({
             message: 'Leave request submitted successfully',
-            email: record
+            email: record,
+            quotaInfo: quota
         });
 
     } catch (err) {
@@ -102,10 +146,26 @@ module.exports.listMyLeaveRequestEmails = async function (req, res) {
         const items = await emailModel
             .find({ employeeId })
             .populate("reviewedBy", "fullname email role")
-            .populate('rejectionHistory.rejectedBy', 'fullname email') // ⭐ Added
+            .populate('rejectionHistory.rejectedBy', 'fullname email')
             .sort({ receivedAt: -1 });
 
-        return res.status(200).json({ emails: items });
+        // ⭐⭐⭐ GET BALANCE INFO ⭐⭐⭐
+        const user = await User.findById(employeeId);
+        const quota = await checkMonthlyQuota(employeeId);
+
+        return res.status(200).json({ 
+            emails: items,
+            balanceInfo: {
+                clBalance: user.clBalance,
+                slBalance: user.slBalance,
+                totalPaidLeaves: user.clBalance + user.slBalance,
+                monthlyQuota: {
+                    used: quota.used,
+                    available: quota.available,
+                    remaining: quota.remaining
+                }
+            }
+        });
 
     } catch (err) {
         return res.status(500).json({ message: err.message });
@@ -123,7 +183,7 @@ module.exports.getMyLeaveRequestEmail = async function (req, res) {
         const item = await emailModel
             .findById(id)
             .populate("reviewedBy", "fullname email role")
-            .populate('rejectionHistory.rejectedBy', 'fullname email'); // ⭐ Added
+            .populate('rejectionHistory.rejectedBy', 'fullname email');
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
 
@@ -179,7 +239,7 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
     try {
         const employeeId = req.user?._id;
         const { id } = req.params;
-        const { subject, leaveReason, leaveType, startDate, endDate, leaveDuration, halfDayType } = req.body;  // ⭐ ADDED
+        const { subject, leaveReason, leaveType, startDate, endDate, leaveDuration, halfDayType } = req.body;
 
         if (!employeeId) return res.status(401).json({ message: 'Unauthorized' });
 
@@ -210,7 +270,6 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}` });
         }
 
-        // ⭐⭐⭐ NEW: Half Day Validation ⭐⭐⭐
         if (!leaveDuration || !["Full Day", "Half Day"].includes(leaveDuration)) {
             return res.status(400).json({ message: 'leaveDuration must be "Full Day" or "Half Day"' });
         }
@@ -218,7 +277,6 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
         if (leaveDuration === "Half Day" && (!halfDayType || !["First Half", "Second Half"].includes(halfDayType))) {
             return res.status(400).json({ message: 'halfDayType required for Half Day' });
         }
-        // ⭐⭐⭐ END NEW ⭐⭐⭐
 
         const start = new Date(startDate);
         const end = new Date(endDate);
@@ -227,23 +285,34 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
+        // ⭐⭐⭐ CHECK MONTHLY QUOTA ⭐⭐⭐
+        const quota = await checkMonthlyQuota(employeeId);
+        const requestedDays = leaveDuration === "Full Day" ? 1 : 0.5;
+
+        if (quota.remaining < requestedDays) {
+            return res.status(400).json({ 
+                message: `Monthly limit exceeded! You have ${quota.remaining} day(s) remaining.`,
+                quotaInfo: quota
+            });
+        }
+
         // Update record
         item.subject = subject;
         item.leaveReason = leaveReason;
         item.leaveType = leaveType;
-        item.leaveDuration = leaveDuration;  // ⭐ NEW
-        item.halfDayType = leaveDuration === "Half Day" ? halfDayType : "";  // ⭐ NEW
+        item.leaveDuration = leaveDuration;
+        item.halfDayType = leaveDuration === "Half Day" ? halfDayType : "";
         item.startDate = start;
         item.endDate = end;
+        item.leaveDays = requestedDays;
 
         item.status = 'Pending';
         item.submissionCount += 1;
 
-        // Clear past review info & previous rejection reason
         item.adminRemarks = '';
         item.reviewedBy = null;
         item.reviewedAt = null;
-        item.rejectionReason = ''; // ⭐ Added
+        item.rejectionReason = '';
 
         item.updatedAt = new Date();
 

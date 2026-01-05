@@ -1,5 +1,6 @@
 const emailModel = require('../models/emailModel');
 const { sendEmail } = require('../services/emailService');
+const User = require('../models/userModel');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
 const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
@@ -55,7 +56,7 @@ module.exports.listLeaveRequests = async function (req, res) {
             .find(filter)
             .sort({ receivedAt: -1 })
             .populate('employeeId', 'fullname email role')
-            .populate('rejectionHistory.rejectedBy', 'fullname email role'); // ⭐ populated history.rejectedBy
+            .populate('rejectionHistory.rejectedBy', 'fullname email role');
 
         return res.status(200).json({ emails: items });
     } catch (err) {
@@ -70,7 +71,7 @@ module.exports.getLeaveRequest = async function (req, res) {
         const item = await emailModel
             .findById(id)
             .populate('employeeId', 'fullname email role')
-            .populate('rejectionHistory.rejectedBy', 'fullname email role'); // ⭐ ADDED populate for history
+            .populate('rejectionHistory.rejectedBy', 'fullname email role');
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
 
@@ -84,36 +85,139 @@ module.exports.getLeaveRequest = async function (req, res) {
 module.exports.approveLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
+
         const item = await emailModel
             .findById(id)
             .populate('employeeId', 'fullname email role')
             .populate('reviewedBy', 'fullname email role');
 
         if (!item) return res.status(404).json({ message: 'Record not found' });
+        
         if (item.employeeId?._id.toString() === req.user._id.toString()) {
             return res.status(403).json({ message: "Admins cannot approve their own leave request" });
         }
+        
         if (item.status !== 'Pending') 
             return res.status(400).json({ message: 'Only pending records can be approved' });
 
+        // ⭐⭐⭐ BALANCE DEDUCTION LOGIC START ⭐⭐⭐
+        const user = await User.findById(item.employeeId._id);
+        if (!user) return res.status(404).json({ message: 'Employee not found' });
+
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        
+        // Reset if new month
+        if (user.currentMonth !== currentMonth) {
+            const unusedQuota = 1 - user.monthlyQuotaUsed;
+            user.carryForwardDays = unusedQuota > 0 ? unusedQuota : 0;
+            user.monthlyQuotaUsed = 0;
+            user.currentMonth = currentMonth;
+            user.lastMonthlyReset = new Date();
+        }
+
+        const requestedDays = item.leaveDays || (item.leaveDuration === "Full Day" ? 1 : 0.5);
+        const totalAvailable = 1 + user.carryForwardDays;
+
+        // Check monthly quota
+        if (user.monthlyQuotaUsed + requestedDays > totalAvailable) {
+            return res.status(400).json({ 
+                message: `Monthly quota exceeded. Employee has only ${totalAvailable - user.monthlyQuotaUsed} day(s) remaining.`,
+                quotaInfo: {
+                    used: user.monthlyQuotaUsed,
+                    available: totalAvailable,
+                    requested: requestedDays
+                }
+            });
+        }
+
+        let isPaid = true;
+        let deductedFrom = "";
+        let balanceDeducted = requestedDays;
+
+        // Deduction Priority: CL → SL → Unpaid
+        if (user.clBalance >= requestedDays) {
+            user.clBalance -= requestedDays;
+            deductedFrom = "CL";
+        } else if (user.clBalance > 0 && user.clBalance + user.slBalance >= requestedDays) {
+            const remaining = requestedDays - user.clBalance;
+            user.clBalance = 0;
+            user.slBalance -= remaining;
+            deductedFrom = "CL+SL";
+        } else if (user.slBalance >= requestedDays) {
+            user.slBalance -= requestedDays;
+            deductedFrom = "SL";
+        } else {
+            isPaid = false;
+            deductedFrom = "Unpaid";
+            balanceDeducted = 0;
+        }
+
+        // Update monthly quota
+        user.monthlyQuotaUsed += requestedDays;
+        
+        // Add to leave history
+        user.leaveHistory.push({
+            leaveId: item._id,
+            month: currentMonth,
+            days: requestedDays,
+            type: item.leaveType,
+            appliedAt: new Date()
+        });
+
+        await user.save();
+        // ⭐⭐⭐ BALANCE LOGIC END ⭐⭐⭐
+
+        // Update leave request
         item.status = 'Approved';
-        item.adminRemarks = `Approved by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`;
+        item.isPaid = isPaid;
+        item.balanceDeducted = balanceDeducted;
+        item.deductedFrom = deductedFrom;
+        item.adminRemarks = `Approved by ${req.user.fullname.firstname} ${req.user.fullname.lastname} | ${isPaid ? 'Paid' : 'Unpaid'} | Deducted from: ${deductedFrom}`;
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
         await item.save();
 
+        // Send email
         try {
             const adminName = req.user?.fullname
                 ? `${req.user.fullname.firstname} ${req.user.fullname.lastname}`.trim()
                 : 'Admin';
 
-            const { subject, text, html } = buildApprovalTemplate(item, adminName);
+            const subject = 'Leave Request Approved';
+            const text = `Dear ${item.employeeName},\n\nYour leave request has been APPROVED.\n\nLeave Type: ${item.leaveType}\nDuration: ${item.leaveDuration}\nStatus: ${isPaid ? 'Paid ✅' : 'Unpaid ❌'}\nDeducted from: ${deductedFrom}\n\nRemaining Balance:\nCL: ${user.clBalance} days\nSL: ${user.slBalance} days\nTotal: ${user.clBalance + user.slBalance} days\n\nRegards,\n${adminName}`;
+            
+            const html = `
+                <p>Dear ${item.employeeName},</p>
+                <p>Your leave request has been <strong style="color:green;">APPROVED</strong>.</p>
+                <hr/>
+                <h3>Leave Details:</h3>
+                <ul>
+                    <li><strong>Leave Type:</strong> ${item.leaveType}</li>
+                    <li><strong>Duration:</strong> ${item.leaveDuration}</li>
+                    <li><strong>Status:</strong> <span style="color:${isPaid ? 'green' : 'red'};">${isPaid ? 'Paid ✅' : 'Unpaid ❌'}</span></li>
+                    <li><strong>Deducted from:</strong> ${deductedFrom}</li>
+                </ul>
+                <h3>Remaining Balance:</h3>
+                <ul>
+                    <li><strong>Casual Leave (CL):</strong> ${user.clBalance} days</li>
+                    <li><strong>Sick Leave (SL):</strong> ${user.slBalance} days</li>
+                    <li><strong>Total:</strong> ${user.clBalance + user.slBalance} days</li>
+                </ul>
+                <p>Regards,<br/>${adminName}</p>
+            `;
+
             if (!item.employeeId?.email) throw new Error('Employee email not found');
             await sendEmail({ to: item.employeeId.email, subject, text, html });
 
             return res.status(200).json({ 
                 message: 'Leave request approved', 
-                email: item, 
+                email: item,
+                balanceInfo: {
+                    clBalance: user.clBalance,
+                    slBalance: user.slBalance,
+                    monthlyQuotaUsed: user.monthlyQuotaUsed,
+                    isPaid: isPaid
+                },
                 emailSent: true 
             });
         } catch (mailErr) {
@@ -121,6 +225,12 @@ module.exports.approveLeaveRequest = async function (req, res) {
             return res.status(200).json({
                 message: 'Leave request approved (email failed to send)',
                 email: item,
+                balanceInfo: {
+                    clBalance: user.clBalance,
+                    slBalance: user.slBalance,
+                    monthlyQuotaUsed: user.monthlyQuotaUsed,
+                    isPaid: isPaid
+                },
                 emailSent: false,
             });
         }
@@ -151,14 +261,12 @@ module.exports.rejectLeaveRequest = async function (req, res) {
         if (item.status !== 'Pending')
             return res.status(400).json({ message: 'Only pending records can be rejected' });
 
-        // Update main fields
         item.status = 'Rejected';
         item.rejectionReason = rejectionReason.trim();
         item.adminRemarks = `Rejected by ${req.user.fullname.firstname} ${req.user.fullname.lastname}`;
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
 
-        // ⭐⭐ PUSH TO rejectionHistory BEFORE SAVE
         item.rejectionHistory.push({
             rejectedAt: new Date(),
             rejectedBy: req.user._id,
@@ -167,8 +275,8 @@ module.exports.rejectLeaveRequest = async function (req, res) {
             attemptNumber: item.submissionCount,
             employeeLeaveReason: item.leaveReason,
             leaveType: item.leaveType,
-            leaveDuration: item.leaveDuration,  // ⭐ NEW
-            halfDayType: item.halfDayType,      // ⭐ NEW
+            leaveDuration: item.leaveDuration,
+            halfDayType: item.halfDayType,
             startDate: item.startDate,
             endDate: item.endDate
         });
@@ -360,17 +468,12 @@ module.exports.getCalendarData = async function (req, res) {
     }
 };
 
-// ==================== NEW CALENDAR EDIT FUNCTIONS ====================
-// Add these NEW functions to your existing adminController.js
-// Don't replace anything, just add these at the end
-
-// -------------------- EDIT LEAVE FROM CALENDAR --------------------
+// ==================== CALENDAR EDIT FUNCTIONS ====================
 module.exports.editLeaveFromCalendar = async function (req, res) {
     try {
         const { id } = req.params;
         const { leaveType, startDate, endDate, leaveDuration, halfDayType, leaveReason } = req.body;
 
-        // Validation
         if (!leaveType || !startDate || !endDate) {
             return res.status(400).json({ message: 'leaveType, startDate, and endDate are required' });
         }
@@ -382,7 +485,6 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
             });
         }
 
-        // Half day validation
         if (leaveDuration && !["Full Day", "Half Day"].includes(leaveDuration)) {
             return res.status(400).json({ 
                 message: 'leaveDuration must be "Full Day" or "Half Day"' 
@@ -402,7 +504,6 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
-        // Find leave request
         const item = await emailModel
             .findById(id)
             .populate('employeeId', 'fullname email role');
@@ -411,19 +512,16 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
             return res.status(404).json({ message: 'Leave request not found' });
         }
 
-        // Only allow editing approved leaves
         if (item.status !== 'Approved') {
             return res.status(400).json({ 
                 message: 'Only approved leaves can be edited from calendar' 
             });
         }
 
-        // Store old values for notification
         const oldStartDate = item.startDate;
         const oldEndDate = item.endDate;
         const oldLeaveType = item.leaveType;
 
-        // Update leave details
         item.leaveType = leaveType;
         item.startDate = start;
         item.endDate = end;
@@ -442,7 +540,6 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
 
         await item.save();
 
-        // Send notification email to employee
         try {
             const employeeEmail = item.employeeId?.email;
             if (employeeEmail) {
@@ -489,7 +586,6 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
     }
 };
 
-// -------------------- DELETE LEAVE FROM CALENDAR --------------------
 module.exports.deleteLeaveFromCalendar = async function (req, res) {
     try {
         const { id } = req.params;
@@ -502,24 +598,20 @@ module.exports.deleteLeaveFromCalendar = async function (req, res) {
             return res.status(404).json({ message: 'Leave request not found' });
         }
 
-        // Only allow deleting approved leaves
         if (item.status !== 'Approved') {
             return res.status(400).json({ 
                 message: 'Only approved leaves can be deleted from calendar' 
             });
         }
 
-        // Store details before deletion
         const employeeEmail = item.employeeId?.email;
         const employeeName = item.employeeName;
         const leaveType = item.leaveType;
         const startDate = item.startDate;
         const endDate = item.endDate;
 
-        // Delete the leave
         await emailModel.findByIdAndDelete(id);
 
-        // Send notification email
         try {
             if (employeeEmail) {
                 const subject = 'Leave Request Cancelled by Admin';

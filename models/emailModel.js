@@ -40,7 +40,6 @@ const emailDataSchema = new mongoose.Schema({
         required: true,
     },
     
-    // ⭐⭐⭐ NEW: Half Day Support ⭐⭐⭐
     leaveDuration: {
         type: String,
         enum: ["Full Day", "Half Day"],
@@ -53,7 +52,6 @@ const emailDataSchema = new mongoose.Schema({
         enum: ["First Half", "Second Half", ""],
         default: ""
     },
-    // ⭐⭐⭐ END NEW ⭐⭐⭐
     
     startDate: {
         type: Date,
@@ -108,7 +106,6 @@ const emailDataSchema = new mongoose.Schema({
         default: Date.now,
     },
 
-    // ⭐ ADDITIONAL FIELDS START ⭐
     rejectionReason: {
         type: String,
         default: "",
@@ -124,7 +121,6 @@ const emailDataSchema = new mongoose.Schema({
         default: null,
     },
 
-    // ⭐⭐⭐ NEW: Full Rejection History ⭐⭐⭐
     rejectionHistory: [
         {
             rejectedAt: { type: Date, required: true },
@@ -136,16 +132,12 @@ const emailDataSchema = new mongoose.Schema({
             rejectionReason: { type: String, required: true },
             adminRemarks: { type: String, default: "" },
             attemptNumber: { type: Number, required: true },
-
-            // ⭐ Employee info snapshot
             employeeLeaveReason: { type: String, required: true },
             leaveType: { 
                 type: String, 
                 enum: ["Sick Leave", "Casual Leave", "Emergency Leave"],
                 required: true 
             },
-            
-            // ⭐⭐⭐ NEW: Half Day in History ⭐⭐⭐
             leaveDuration: { 
                 type: String, 
                 enum: ["Full Day", "Half Day"], 
@@ -156,15 +148,36 @@ const emailDataSchema = new mongoose.Schema({
                 enum: ["First Half", "Second Half", ""], 
                 default: "" 
             },
-            // ⭐⭐⭐ END NEW ⭐⭐⭐
-            
             startDate: { type: Date, required: true },
             endDate: { type: Date, required: true }
         }
     ],
-    // ⭐⭐⭐ END NEW FIELD ⭐⭐⭐
 
-    // ⭐ ADDITIONAL FIELDS END ⭐
+    // ⭐⭐⭐ NEW FIELDS FOR LEAVE BALANCE TRACKING ⭐⭐⭐
+    isPaid: {
+        type: Boolean,
+        default: true,
+        required: true
+    },
+
+    balanceDeducted: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+
+    deductedFrom: {
+        type: String,
+        enum: ["CL", "SL", "CL+SL", "Unpaid", ""],
+        default: ""
+    },
+
+    leaveDays: {
+        type: Number,
+        default: 0,
+        min: 0
+    }
+    // ⭐⭐⭐ END NEW FIELDS ⭐⭐⭐
 });
 
 // Auto-update timestamp
