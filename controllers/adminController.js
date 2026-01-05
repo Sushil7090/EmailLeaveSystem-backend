@@ -4,7 +4,7 @@ const User = require('../models/userModel');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
 const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
-const MONTHLY_QUOTA_LIMIT = 1.5;  // ✅ UPDATED: 1 Full + 1 Half = 1.5 days
+const MONTHLY_QUOTA_LIMIT = 1.5;  // 1 Full + 1 Half
 
 function formatDate(date) {
     if (!date) return '';
@@ -82,7 +82,7 @@ module.exports.getLeaveRequest = async function (req, res) {
     }
 };
 
-// -------------------- APPROVE LEAVE REQUEST --------------------
+// -------------------- APPROVE LEAVE REQUEST (UPDATED) --------------------
 module.exports.approveLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
@@ -109,7 +109,7 @@ module.exports.approveLeaveRequest = async function (req, res) {
         
         // Reset if new month
         if (user.currentMonth !== currentMonth) {
-            const unusedQuota = MONTHLY_QUOTA_LIMIT - user.monthlyQuotaUsed;  // ✅ UPDATED: 1.5
+            const unusedQuota = MONTHLY_QUOTA_LIMIT - user.monthlyQuotaUsed;
             user.carryForwardDays = unusedQuota > 0 ? unusedQuota : 0;
             user.monthlyQuotaUsed = 0;
             user.currentMonth = currentMonth;
@@ -117,12 +117,12 @@ module.exports.approveLeaveRequest = async function (req, res) {
         }
 
         const requestedDays = item.leaveDays || (item.leaveDuration === "Full Day" ? 1 : 0.5);
-        const totalAvailable = MONTHLY_QUOTA_LIMIT + user.carryForwardDays;  // ✅ UPDATED: 1.5 + carry
+        const totalAvailable = MONTHLY_QUOTA_LIMIT + user.carryForwardDays;
 
         // Check monthly quota
         if (user.monthlyQuotaUsed + requestedDays > totalAvailable) {
             return res.status(400).json({ 
-                message: `Monthly quota exceeded. Employee has only ${totalAvailable - user.monthlyQuotaUsed} day(s) remaining. Maximum 1.5 days per month allowed (1 Full + 1 Half).`,  // ✅ UPDATED
+                message: `Monthly quota exceeded. Employee has only ${totalAvailable - user.monthlyQuotaUsed} day(s) remaining. Maximum 1.5 days per month allowed (1 Full + 1 Half).`,
                 quotaInfo: {
                     used: user.monthlyQuotaUsed,
                     available: totalAvailable,
@@ -135,26 +135,37 @@ module.exports.approveLeaveRequest = async function (req, res) {
         let deductedFrom = "";
         let balanceDeducted = requestedDays;
 
-        // Deduction Priority: CL → SL → Unpaid
-        if (user.clBalance >= requestedDays) {
-            user.clBalance -= requestedDays;
-            deductedFrom = "CL";
-        } else if (user.clBalance > 0 && user.clBalance + user.slBalance >= requestedDays) {
-            const remaining = requestedDays - user.clBalance;
-            user.clBalance = 0;
-            user.slBalance -= remaining;
-            deductedFrom = "CL+SL";
-        } else if (user.slBalance >= requestedDays) {
-            user.slBalance -= requestedDays;
-            deductedFrom = "SL";
-        } else {
-            isPaid = false;
-            deductedFrom = "Unpaid";
-            balanceDeducted = 0;
+        // ✅✅✅ STRICT TYPE-BASED DEDUCTION (NO MIXING) ✅✅✅
+        if (item.leaveType === "Sick Leave") {
+            // ✅ Sick Leave → फक्त SL मधून
+            if (user.slBalance >= requestedDays) {
+                user.slBalance -= requestedDays;
+                deductedFrom = "SL";
+            } else {
+                // ❌ SL नाही → Unpaid (CL ला हात नाही)
+                isPaid = false;
+                deductedFrom = "Unpaid (Insufficient SL Balance)";
+                balanceDeducted = 0;
+            }
+            
+        } else if (item.leaveType === "Casual Leave" || item.leaveType === "Emergency Leave") {
+            // ✅ Casual/Emergency → फक्त CL मधून
+            if (user.clBalance >= requestedDays) {
+                user.clBalance -= requestedDays;
+                deductedFrom = "CL";
+            } else {
+                // ❌ CL नाही → Unpaid (SL ला हात नाही)
+                isPaid = false;
+                deductedFrom = "Unpaid (Insufficient CL Balance)";
+                balanceDeducted = 0;
+            }
         }
+        // ✅✅✅ END STRICT LOGIC ✅✅✅
 
-        // Update monthly quota
-        user.monthlyQuotaUsed += requestedDays;
+        // Update monthly quota ONLY IF PAID
+        if (isPaid) {
+            user.monthlyQuotaUsed += requestedDays;
+        }
         
         // Add to leave history
         user.leaveHistory.push({
@@ -311,7 +322,7 @@ module.exports.rejectLeaveRequest = async function (req, res) {
     }
 };
 
-// -------------------- SUMMARY & OTHER FUNCTIONS --------------------
+// -------------------- SUMMARY STATS --------------------
 module.exports.summaryStats = async function (req, res) {
     try {
         const [pending, approved, rejected] = await Promise.all([
@@ -325,6 +336,7 @@ module.exports.summaryStats = async function (req, res) {
     }
 };
 
+// -------------------- SEND FEEDBACK --------------------
 module.exports.sendFeedbackToEmployee = async function (req, res) {
     try {
         const { toEmail, subject, message } = req.body;
@@ -346,6 +358,7 @@ module.exports.sendFeedbackToEmployee = async function (req, res) {
     }
 };
 
+// -------------------- EMPLOYEES ON LEAVE TODAY --------------------
 module.exports.getEmployeesOnLeaveToday = async function (req, res) {
     try {
         const today = new Date();
@@ -382,6 +395,7 @@ module.exports.getEmployeesOnLeaveToday = async function (req, res) {
     }
 };
 
+// -------------------- UPCOMING LEAVES --------------------
 module.exports.getUpcomingLeaves = async function (req, res) {
     try {
         const today = new Date();
@@ -422,6 +436,7 @@ module.exports.getUpcomingLeaves = async function (req, res) {
     }
 };
 
+// -------------------- CALENDAR DATA --------------------
 module.exports.getCalendarData = async function (req, res) {
     try {
         const { year, month } = req.query;
@@ -469,7 +484,7 @@ module.exports.getCalendarData = async function (req, res) {
     }
 };
 
-// ==================== CALENDAR EDIT FUNCTIONS ====================
+// ==================== CALENDAR EDIT ====================
 module.exports.editLeaveFromCalendar = async function (req, res) {
     try {
         const { id } = req.params;
@@ -479,7 +494,6 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
             return res.status(400).json({ message: 'leaveType, startDate, and endDate are required' });
         }
 
-        const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
         if (!ALLOWED_LEAVE_TYPES.includes(leaveType)) {
             return res.status(400).json({ 
                 message: `leaveType must be one of: ${ALLOWED_LEAVE_TYPES.join(', ')}` 
@@ -587,6 +601,7 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
     }
 };
 
+// ==================== CALENDAR DELETE ====================
 module.exports.deleteLeaveFromCalendar = async function (req, res) {
     try {
         const { id } = req.params;
