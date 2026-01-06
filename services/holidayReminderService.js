@@ -44,7 +44,6 @@ async function checkAndSendHolidayReminders() {
     // Send mail to each employee
     for (const employee of employees) {
       try {
-        // ✅ FIXED FULL NAME FORMAT
         const employeeName = employee.fullname
           ? `${employee.fullname.firstname || ''} ${employee.fullname.middlename || ''} ${employee.fullname.lastname || ''}`
               .replace(/\s+/g, ' ')
@@ -53,13 +52,9 @@ async function checkAndSendHolidayReminders() {
 
         const employeeEmail = employee.email;
 
-        // Format holiday names
         const holidayNames = holidaysTomorrow.map(h => h.holidayName).join(', ');
-        
-        // Format holiday types
         const holidayTypes = [...new Set(holidaysTomorrow.map(h => h.holidayType))].join(', ');
-        
-        // Format date
+
         const holidayDate = new Date(holidaysTomorrow[0].holidayDate).toLocaleDateString('en-IN', {
           weekday: 'long',
           day: 'numeric',
@@ -67,7 +62,6 @@ async function checkAndSendHolidayReminders() {
           year: 'numeric'
         });
 
-        // Email content - SIMPLE & PROFESSIONAL
         const emailContent = `
           <!DOCTYPE html>
           <html lang="en">
@@ -139,17 +133,17 @@ async function checkAndSendHolidayReminders() {
 }
 
 // ===============================
-// START CRON
+// START CRON (11 AM)
 // ===============================
 function startHolidayReminderScheduler() {
-  cron.schedule('0 18 * * *', () => {
-    console.log('🕕 Holiday cron triggered');
+  cron.schedule('0 11 * * *', () => {
+    console.log('🕚 Holiday cron triggered (11 AM)');
     checkAndSendHolidayReminders();
   }, {
     timezone: 'Asia/Kolkata'
   });
 
-  console.log('✅ Holiday reminder cron started (6 PM IST)');
+  console.log('✅ Holiday reminder cron started (11 AM IST)');
 }
 
 // ===============================

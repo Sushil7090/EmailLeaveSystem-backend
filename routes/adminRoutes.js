@@ -26,6 +26,8 @@ router.delete('/calendar/leave/:id', authUser, requireAdmin, adminController.del
 // ⭐⭐⭐ NEW: Employee Leave Summary & Reports ⭐⭐⭐
 router.get('/employees/leave-summary', authUser, requireAdmin, adminController.getEmployeeLeaveSummary);
 router.get('/employees/:employeeId/detailed-report', authUser, requireAdmin, adminController.getDetailedEmployeeReport);
+// Get single employee by ID
+router.get('/employees/:id', authUser, requireAdmin, adminController.getSingleEmployee);
 
 // Manual Reminder Trigger (for testing)
 router.post('/trigger-leave-reminders', authUser, requireAdmin, async (req, res) => {

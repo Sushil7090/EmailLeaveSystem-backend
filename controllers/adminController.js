@@ -852,3 +852,33 @@ module.exports.deleteLeaveFromCalendar = async function (req, res) {
         return res.status(500).json({ message: err.message });
     }
 };
+// Get Single Employee
+exports.getSingleEmployee = async (req, res) => {
+    try {
+        const employeeId = req.params.id;
+
+        const employee = await User.findById(employeeId)
+            .select("-password -passwordResetToken -passwordResetExpires");
+
+        if (!employee) {
+            return res.status(404).json({
+                success: false,
+                message: "Employee not found"
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: employee
+        });
+
+    } catch (error) {
+        console.error("Error fetching employee:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal Server Error",
+            error: error.message
+        });
+    }
+};

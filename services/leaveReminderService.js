@@ -1,5 +1,5 @@
 // services/leaveReminderService.js
-// NEW FILE - Create this new service file in Backend/services/
+// UPDATED: Cron set to 11 AM
 
 const cron = require('node-cron');
 const emailModel = require('../models/emailModel');
@@ -37,6 +37,7 @@ async function sendLeaveReminders() {
         for (const leave of upcomingLeaves) {
             try {
                 const employeeEmail = leave.employeeId?.email;
+
                 if (!employeeEmail) {
                     console.warn(`⚠️ No email found for leave ID: ${leave._id}`);
                     continue;
@@ -51,7 +52,7 @@ async function sendLeaveReminders() {
                 });
 
                 const subject = '🔔 Reminder: Your Leave Starts Tomorrow';
-                
+
                 const text = `Dear ${employeeName},
 
 This is a friendly reminder that your leave starts tomorrow.
@@ -144,24 +145,21 @@ QHills Technology Pvt. Ltd`;
 }
 
 /**
- * Start the cron job to run daily at 6 PM IST
+ * Start the cron job to run daily at 11 AM IST
  */
 function startLeaveReminderScheduler() {
-    // Schedule: Every day at 6:00 PM (18:00)
-    // Cron format: minute hour day month weekday
-    // '0 18 * * *' = At 18:00 (6 PM) every day
-    
-    const job = cron.schedule('0 18 * * *', () => {
-        console.log('⏰ Cron job triggered: Checking for tomorrow\'s leaves...');
+    // Schedule: Every day at 11:00 AM
+    const job = cron.schedule('0 11 * * *', () => {
+        console.log('⏰ Cron job triggered: Checking for tomorrow\'s leaves (11 AM)...');
         sendLeaveReminders();
     }, {
         scheduled: true,
-        timezone: "Asia/Kolkata" // Indian timezone
+        timezone: "Asia/Kolkata"
     });
 
-    console.log('✅ Leave reminder scheduler started (runs daily at 6:00 PM IST)');
-    
-    // Optional: Run immediately on server start for testing
+    console.log('✅ Leave reminder scheduler started (runs daily at 11:00 AM IST)');
+
+    // Optional test mode
     if (process.env.SEND_REMINDER_ON_START === 'true') {
         console.log('🧪 Running leave reminder immediately (test mode)...');
         sendLeaveReminders();
