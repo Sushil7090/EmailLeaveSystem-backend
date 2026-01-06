@@ -4,7 +4,6 @@ const User = require('../models/userModel');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
 const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
-const MONTHLY_QUOTA_LIMIT = 1.5;  // 1 Full + 1 Half
 
 function formatDate(date) {
     if (!date) return '';
@@ -82,7 +81,7 @@ module.exports.getLeaveRequest = async function (req, res) {
     }
 };
 
-// -------------------- APPROVE LEAVE REQUEST (UPDATED) --------------------
+// -------------------- APPROVE LEAVE REQUEST (UPDATED WITH NEW LOGIC) --------------------
 module.exports.approveLeaveRequest = async function (req, res) {
     try {
         const { id } = req.params;
@@ -101,70 +100,101 @@ module.exports.approveLeaveRequest = async function (req, res) {
         if (item.status !== 'Pending') 
             return res.status(400).json({ message: 'Only pending records can be approved' });
 
-        // ⭐⭐⭐ BALANCE DEDUCTION LOGIC START (UPDATED) ⭐⭐⭐
+        // ⭐⭐⭐ MAIN APPROVAL LOGIC START ⭐⭐⭐
         const user = await User.findById(item.employeeId._id);
         if (!user) return res.status(404).json({ message: 'Employee not found' });
 
         const currentMonth = new Date().toISOString().slice(0, 7);
         
-        // Reset if new month
+        // ✅ MONTHLY RESET LOGIC
         if (user.currentMonth !== currentMonth) {
-            const unusedQuota = MONTHLY_QUOTA_LIMIT - user.monthlyQuotaUsed;
-            user.carryForwardDays = unusedQuota > 0 ? unusedQuota : 0;
-            user.monthlyQuotaUsed = 0;
+            // Calculate carry forward from previous month
+            const unusedFull = 1 - user.currentMonthPaidFull;
+            const unusedHalf = 1 - user.currentMonthPaidHalf;
+            
+            user.previousMonthBalanceFull = unusedFull > 0 ? unusedFull : 0;
+            user.previousMonthBalanceHalf = unusedHalf > 0 ? unusedHalf : 0;
+            
+            // Reset current month counters
+            user.currentMonthPaidFull = 0;
+            user.currentMonthPaidHalf = 0;
+            user.currentMonthUnpaidLeaves = 0;
             user.currentMonth = currentMonth;
             user.lastMonthlyReset = new Date();
         }
 
-        const requestedDays = item.leaveDays || (item.leaveDuration === "Full Day" ? 1 : 0.5);
-        const totalAvailable = MONTHLY_QUOTA_LIMIT + user.carryForwardDays;
+        const isFullDay = item.leaveDuration === "Full Day";
+        const requestedDays = isFullDay ? 1 : 0.5;
 
-        // Check monthly quota
-        if (user.monthlyQuotaUsed + requestedDays > totalAvailable) {
-            return res.status(400).json({ 
-                message: `Monthly quota exceeded. Employee has only ${totalAvailable - user.monthlyQuotaUsed} day(s) remaining. Maximum 1.5 days per month allowed (1 Full + 1 Half).`,
-                quotaInfo: {
-                    used: user.monthlyQuotaUsed,
-                    available: totalAvailable,
-                    requested: requestedDays
-                }
-            });
-        }
-
-        let isPaid = true;
+        let isPaid = false;
         let deductedFrom = "";
-        let balanceDeducted = requestedDays;
+        let balanceDeducted = 0;
 
-        // ✅✅✅ STRICT TYPE-BASED DEDUCTION (NO MIXING) ✅✅✅
-        if (item.leaveType === "Sick Leave") {
-            // ✅ Sick Leave → फक्त SL मधून
-            if (user.slBalance >= requestedDays) {
-                user.slBalance -= requestedDays;
-                deductedFrom = "SL";
-            } else {
-                // ❌ SL नाही → Unpaid (CL ला हात नाही)
-                isPaid = false;
-                deductedFrom = "Unpaid (Insufficient SL Balance)";
-                balanceDeducted = 0;
-            }
+        // ✅✅✅ 3-STEP CHECKING LOGIC ✅✅✅
+        
+        // STEP A: Check Current Month Paid Quota
+        if (isFullDay && user.currentMonthPaidFull < 1) {
+            // Current month full leave available
+            isPaid = true;
+            deductedFrom = "Current Month Paid (Full)";
+            user.currentMonthPaidFull += 1;
             
-        } else if (item.leaveType === "Casual Leave" || item.leaveType === "Emergency Leave") {
-            // ✅ Casual/Emergency → फक्त CL मधून
-            if (user.clBalance >= requestedDays) {
-                user.clBalance -= requestedDays;
-                deductedFrom = "CL";
-            } else {
-                // ❌ CL नाही → Unpaid (SL ला हात नाही)
-                isPaid = false;
-                deductedFrom = "Unpaid (Insufficient CL Balance)";
-                balanceDeducted = 0;
-            }
+        } else if (!isFullDay && user.currentMonthPaidHalf < 1) {
+            // Current month half leave available
+            isPaid = true;
+            deductedFrom = "Current Month Paid (Half)";
+            user.currentMonthPaidHalf += 1;
+            
+        // STEP B: Check Previous Month Balance (Carry Forward)
+        } else if (isFullDay && user.previousMonthBalanceFull >= 1) {
+            // Use previous month full balance
+            isPaid = true;
+            deductedFrom = "Previous Month Balance (Full)";
+            user.previousMonthBalanceFull -= 1;
+            
+        } else if (!isFullDay && user.previousMonthBalanceHalf >= 1) {
+            // Use previous month half balance
+            isPaid = true;
+            deductedFrom = "Previous Month Balance (Half)";
+            user.previousMonthBalanceHalf -= 1;
+            
+        // STEP C: Mark as Unpaid
+        } else {
+            isPaid = false;
+            deductedFrom = "Unpaid (No Paid Quota Available)";
+            user.currentMonthUnpaidLeaves += requestedDays;
+            user.totalUnpaidLeaves += requestedDays;
         }
-        // ✅✅✅ END STRICT LOGIC ✅✅✅
 
-        // Update monthly quota ONLY IF PAID
+        // ✅ DEDUCT FROM CL/SL ONLY IF PAID
         if (isPaid) {
-            user.monthlyQuotaUsed += requestedDays;
+            balanceDeducted = requestedDays;
+            
+            // Strict type-based deduction
+            if (item.leaveType === "Sick Leave") {
+                if (user.slBalance >= requestedDays) {
+                    user.slBalance -= requestedDays;
+                } else {
+                    // Override to unpaid if insufficient SL
+                    isPaid = false;
+                    deductedFrom = "Unpaid (Insufficient SL Balance)";
+                    balanceDeducted = 0;
+                    user.currentMonthUnpaidLeaves += requestedDays;
+                    user.totalUnpaidLeaves += requestedDays;
+                }
+                
+            } else if (item.leaveType === "Casual Leave" || item.leaveType === "Emergency Leave") {
+                if (user.clBalance >= requestedDays) {
+                    user.clBalance -= requestedDays;
+                } else {
+                    // Override to unpaid if insufficient CL
+                    isPaid = false;
+                    deductedFrom = "Unpaid (Insufficient CL Balance)";
+                    balanceDeducted = 0;
+                    user.currentMonthUnpaidLeaves += requestedDays;
+                    user.totalUnpaidLeaves += requestedDays;
+                }
+            }
         }
         
         // Add to leave history
@@ -173,18 +203,20 @@ module.exports.approveLeaveRequest = async function (req, res) {
             month: currentMonth,
             days: requestedDays,
             type: item.leaveType,
+            isPaid: isPaid,
+            deductedFrom: deductedFrom,
             appliedAt: new Date()
         });
 
         await user.save();
-        // ⭐⭐⭐ BALANCE LOGIC END ⭐⭐⭐
+        // ⭐⭐⭐ LOGIC END ⭐⭐⭐
 
         // Update leave request
         item.status = 'Approved';
         item.isPaid = isPaid;
         item.balanceDeducted = balanceDeducted;
         item.deductedFrom = deductedFrom;
-        item.adminRemarks = `Approved by ${req.user.fullname.firstname} ${req.user.fullname.lastname} | ${isPaid ? 'Paid' : 'Unpaid'} | Deducted from: ${deductedFrom}`;
+        item.adminRemarks = `Approved by ${req.user.fullname.firstname} ${req.user.fullname.lastname} | ${isPaid ? 'Paid' : 'Unpaid'} | ${deductedFrom}`;
         item.reviewedBy = req.user._id;
         item.reviewedAt = new Date();
         await item.save();
@@ -196,7 +228,7 @@ module.exports.approveLeaveRequest = async function (req, res) {
                 : 'Admin';
 
             const subject = 'Leave Request Approved';
-            const text = `Dear ${item.employeeName},\n\nYour leave request has been APPROVED.\n\nLeave Type: ${item.leaveType}\nDuration: ${item.leaveDuration}\nStatus: ${isPaid ? 'Paid ✅' : 'Unpaid ❌'}\nDeducted from: ${deductedFrom}\n\nRemaining Balance:\nCL: ${user.clBalance} days\nSL: ${user.slBalance} days\nTotal: ${user.clBalance + user.slBalance} days\n\nRegards,\n${adminName}`;
+            const text = `Dear ${item.employeeName},\n\nYour leave request has been APPROVED.\n\nLeave Type: ${item.leaveType}\nDuration: ${item.leaveDuration}\nStatus: ${isPaid ? 'Paid ✅' : 'Unpaid ❌'}\nDeducted from: ${deductedFrom}\n\nRemaining Balance:\nCL: ${user.clBalance} days\nSL: ${user.slBalance} days\nTotal: ${user.clBalance + user.slBalance} days\n\nCurrent Month Status:\nPaid Full Used: ${user.currentMonthPaidFull}/1\nPaid Half Used: ${user.currentMonthPaidHalf}/1\nUnpaid Leaves: ${user.currentMonthUnpaidLeaves}\n\nPrevious Month Balance:\nFull: ${user.previousMonthBalanceFull}\nHalf: ${user.previousMonthBalanceHalf}\n\nRegards,\n${adminName}`;
             
             const html = `
                 <p>Dear ${item.employeeName},</p>
@@ -215,6 +247,17 @@ module.exports.approveLeaveRequest = async function (req, res) {
                     <li><strong>Sick Leave (SL):</strong> ${user.slBalance} days</li>
                     <li><strong>Total:</strong> ${user.clBalance + user.slBalance} days</li>
                 </ul>
+                <h3>Current Month Status:</h3>
+                <ul>
+                    <li><strong>Paid Full Used:</strong> ${user.currentMonthPaidFull}/1</li>
+                    <li><strong>Paid Half Used:</strong> ${user.currentMonthPaidHalf}/1</li>
+                    <li><strong>Unpaid Leaves:</strong> ${user.currentMonthUnpaidLeaves}</li>
+                </ul>
+                <h3>Previous Month Balance:</h3>
+                <ul>
+                    <li><strong>Full:</strong> ${user.previousMonthBalanceFull}</li>
+                    <li><strong>Half:</strong> ${user.previousMonthBalanceHalf}</li>
+                </ul>
                 <p>Regards,<br/>${adminName}</p>
             `;
 
@@ -227,7 +270,11 @@ module.exports.approveLeaveRequest = async function (req, res) {
                 balanceInfo: {
                     clBalance: user.clBalance,
                     slBalance: user.slBalance,
-                    monthlyQuotaUsed: user.monthlyQuotaUsed,
+                    currentMonthPaidFull: user.currentMonthPaidFull,
+                    currentMonthPaidHalf: user.currentMonthPaidHalf,
+                    currentMonthUnpaid: user.currentMonthUnpaidLeaves,
+                    previousMonthBalanceFull: user.previousMonthBalanceFull,
+                    previousMonthBalanceHalf: user.previousMonthBalanceHalf,
                     isPaid: isPaid
                 },
                 emailSent: true 
@@ -240,7 +287,9 @@ module.exports.approveLeaveRequest = async function (req, res) {
                 balanceInfo: {
                     clBalance: user.clBalance,
                     slBalance: user.slBalance,
-                    monthlyQuotaUsed: user.monthlyQuotaUsed,
+                    currentMonthPaidFull: user.currentMonthPaidFull,
+                    currentMonthPaidHalf: user.currentMonthPaidHalf,
+                    currentMonthUnpaid: user.currentMonthUnpaidLeaves,
                     isPaid: isPaid
                 },
                 emailSent: false,
@@ -587,16 +636,156 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
                 await sendEmail({ to: employeeEmail, subject, text, html });
             }
         } catch (emailErr) {
-            console.error('Failed to send update notification:', emailErr);
+            console.error('Failed to send cancellation notification:', emailErr);
         }
 
         return res.status(200).json({
-            message: 'Leave updated successfully',
-            email: item
+            message: 'Leave deleted successfully'
         });
 
     } catch (err) {
-        console.error('Error editing leave:', err);
+        console.error('Error deleting leave:', err);
+        return res.status(500).json({ message: err.message });
+    }
+};
+
+// ==================== EMPLOYEE LEAVE SUMMARY FOR ADMIN ====================
+module.exports.getEmployeeLeaveSummary = async function (req, res) {
+    try {
+        const currentMonth = new Date().toISOString().slice(0, 7);
+
+        const employees = await User.find({ role: 'employee' })
+            .select('fullname email clBalance slBalance currentMonthPaidFull currentMonthPaidHalf currentMonthUnpaidLeaves previousMonthBalanceFull previousMonthBalanceHalf totalUnpaidLeaves leaveHistory')
+            .sort({ 'fullname.firstname': 1 });
+
+        const summary = employees.map(emp => {
+            // Calculate paid leaves remaining
+            const currentMonthFullRemaining = 1 - emp.currentMonthPaidFull;
+            const currentMonthHalfRemaining = 1 - emp.currentMonthPaidHalf;
+
+            // Calculate this month's leave counts
+            const thisMonthLeaves = emp.leaveHistory.filter(h => h.month === currentMonth);
+            const thisMonthPaidCount = thisMonthLeaves
+                .filter(h => h.isPaid)
+                .reduce((sum, h) => sum + h.days, 0);
+            const thisMonthUnpaidCount = thisMonthLeaves
+                .filter(h => !h.isPaid)
+                .reduce((sum, h) => sum + h.days, 0);
+
+            return {
+                id: emp._id,
+                name: `${emp.fullname.firstname} ${emp.fullname.lastname}`,
+                email: emp.email,
+                
+                // Overall Balance
+                overallBalance: {
+                    cl: emp.clBalance,
+                    sl: emp.slBalance,
+                    total: emp.clBalance + emp.slBalance
+                },
+                
+                // Current Month Status
+                currentMonth: {
+                    paidFullUsed: emp.currentMonthPaidFull,
+                    paidFullRemaining: currentMonthFullRemaining,
+                    paidHalfUsed: emp.currentMonthPaidHalf,
+                    paidHalfRemaining: currentMonthHalfRemaining,
+                    unpaidLeaves: emp.currentMonthUnpaidLeaves,
+                    totalPaidTaken: thisMonthPaidCount,
+                    totalUnpaidTaken: thisMonthUnpaidCount
+                },
+                
+                // Previous Month Balance (Carry Forward)
+                previousMonthBalance: {
+                    full: emp.previousMonthBalanceFull,
+                    half: emp.previousMonthBalanceHalf
+                },
+                
+                // Lifetime Stats
+                lifetime: {
+                    totalUnpaidLeaves: emp.totalUnpaidLeaves
+                }
+            };
+        });
+
+        return res.status(200).json({ 
+            employees: summary,
+            timestamp: new Date(),
+            currentMonth: currentMonth
+        });
+    } catch (err) {
+        return res.status(500).json({ message: err.message });
+    }
+};
+
+// ==================== DETAILED EMPLOYEE REPORT ====================
+module.exports.getDetailedEmployeeReport = async function (req, res) {
+    try {
+        const { employeeId } = req.params;
+
+        const employee = await User.findById(employeeId)
+            .select('fullname email clBalance slBalance currentMonthPaidFull currentMonthPaidHalf currentMonthUnpaidLeaves previousMonthBalanceFull previousMonthBalanceHalf totalUnpaidLeaves leaveHistory createdAt');
+
+        if (!employee) {
+            return res.status(404).json({ message: 'Employee not found' });
+        }
+
+        // Get all leave requests
+        const leaveRequests = await emailModel
+            .find({ employeeId: employeeId })
+            .populate('reviewedBy', 'fullname email')
+            .sort({ receivedAt: -1 });
+
+        // Group leaves by month
+        const leavesByMonth = {};
+        employee.leaveHistory.forEach(leave => {
+            if (!leavesByMonth[leave.month]) {
+                leavesByMonth[leave.month] = {
+                    paid: 0,
+                    unpaid: 0,
+                    details: []
+                };
+            }
+            if (leave.isPaid) {
+                leavesByMonth[leave.month].paid += leave.days;
+            } else {
+                leavesByMonth[leave.month].unpaid += leave.days;
+            }
+            leavesByMonth[leave.month].details.push({
+                type: leave.type,
+                days: leave.days,
+                isPaid: leave.isPaid,
+                deductedFrom: leave.deductedFrom,
+                date: leave.appliedAt
+            });
+        });
+
+        const currentMonth = new Date().toISOString().slice(0, 7);
+
+        return res.status(200).json({
+            employee: {
+                id: employee._id,
+                name: `${employee.fullname.firstname} ${employee.fullname.lastname}`,
+                email: employee.email,
+                joinDate: employee.createdAt
+            },
+            currentStatus: {
+                clBalance: employee.clBalance,
+                slBalance: employee.slBalance,
+                totalBalance: employee.clBalance + employee.slBalance,
+                currentMonthPaidFull: employee.currentMonthPaidFull,
+                currentMonthPaidHalf: employee.currentMonthPaidHalf,
+                currentMonthUnpaid: employee.currentMonthUnpaidLeaves,
+                previousMonthBalanceFull: employee.previousMonthBalanceFull,
+                previousMonthBalanceHalf: employee.previousMonthBalanceHalf,
+                lifetimeUnpaid: employee.totalUnpaidLeaves
+            },
+            leavesByMonth: leavesByMonth,
+            allLeaveRequests: leaveRequests,
+            generatedAt: new Date()
+        });
+
+    } catch (err) {
         return res.status(500).json({ message: err.message });
     }
 };
@@ -650,8 +839,8 @@ module.exports.deleteLeaveFromCalendar = async function (req, res) {
 
                 await sendEmail({ to: employeeEmail, subject, text, html });
             }
-        } catch (emailErr) {
-            console.error('Failed to send cancellation notification:', emailErr);
+        } catch (emailError) {
+            console.error('Failed to send cancellation notification:', emailError);
         }
 
         return res.status(200).json({

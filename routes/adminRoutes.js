@@ -19,11 +19,15 @@ router.get('/calendar/employees-on-leave-today', authUser, requireAdmin, adminCo
 router.get('/calendar/upcoming-leaves', authUser, requireAdmin, adminController.getUpcomingLeaves);
 router.get('/calendar/data', authUser, requireAdmin, adminController.getCalendarData);
 
-// ⭐⭐⭐ NEW: Calendar Edit Routes ⭐⭐⭐
+// Calendar Edit Routes
 router.put('/calendar/leave/:id', authUser, requireAdmin, adminController.editLeaveFromCalendar);
 router.delete('/calendar/leave/:id', authUser, requireAdmin, adminController.deleteLeaveFromCalendar);
 
-// ⭐⭐⭐ NEW: Manual Reminder Trigger (for testing) ⭐⭐⭐
+// ⭐⭐⭐ NEW: Employee Leave Summary & Reports ⭐⭐⭐
+router.get('/employees/leave-summary', authUser, requireAdmin, adminController.getEmployeeLeaveSummary);
+router.get('/employees/:employeeId/detailed-report', authUser, requireAdmin, adminController.getDetailedEmployeeReport);
+
+// Manual Reminder Trigger (for testing)
 router.post('/trigger-leave-reminders', authUser, requireAdmin, async (req, res) => {
     try {
         const { triggerManualReminder } = require('../services/leaveReminderService');

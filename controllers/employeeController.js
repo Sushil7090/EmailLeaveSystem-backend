@@ -4,37 +4,61 @@ const User = require('../models/userModel');
 
 const REQUIRED_SUBJECT = 'Leave Request Application';
 const ALLOWED_LEAVE_TYPES = ["Sick Leave", "Casual Leave", "Emergency Leave"];
-const MONTHLY_QUOTA_LIMIT = 1.5;  // ✅ UPDATED: 1 Full + 1 Half = 1.5 days
 
 // ⭐⭐⭐ HELPER FUNCTION: Check Monthly Quota (UPDATED) ⭐⭐⭐
 async function checkMonthlyQuota(employeeId) {
-    const currentMonth = new Date().toISOString().slice(0, 7); // "2026-01"
+    const currentMonth = new Date().toISOString().slice(0, 7);
     
     const user = await User.findById(employeeId);
     if (!user) throw new Error('User not found');
 
     // Reset if new month
     if (user.currentMonth !== currentMonth) {
-        const unusedQuota = MONTHLY_QUOTA_LIMIT - user.monthlyQuotaUsed;  // ✅ UPDATED: 1.5
-        user.carryForwardDays = unusedQuota > 0 ? unusedQuota : 0;
-        user.monthlyQuotaUsed = 0;
+        const unusedFull = 1 - user.currentMonthPaidFull;
+        const unusedHalf = 1 - user.currentMonthPaidHalf;
+        
+        user.previousMonthBalanceFull = unusedFull > 0 ? unusedFull : 0;
+        user.previousMonthBalanceHalf = unusedHalf > 0 ? unusedHalf : 0;
+        
+        user.currentMonthPaidFull = 0;
+        user.currentMonthPaidHalf = 0;
+        user.currentMonthUnpaidLeaves = 0;
         user.currentMonth = currentMonth;
         user.lastMonthlyReset = new Date();
         await user.save();
     }
 
-    const totalAvailable = MONTHLY_QUOTA_LIMIT + user.carryForwardDays;  // ✅ UPDATED: 1.5 + carry
-    const remaining = totalAvailable - user.monthlyQuotaUsed;
+    // Calculate available paid leaves
+    const currentMonthFullRemaining = 1 - user.currentMonthPaidFull;
+    const currentMonthHalfRemaining = 1 - user.currentMonthPaidHalf;
+    const previousMonthFullAvailable = user.previousMonthBalanceFull;
+    const previousMonthHalfAvailable = user.previousMonthBalanceHalf;
+
+    const totalPaidFullAvailable = currentMonthFullRemaining + previousMonthFullAvailable;
+    const totalPaidHalfAvailable = currentMonthHalfRemaining + previousMonthHalfAvailable;
 
     return {
-        used: user.monthlyQuotaUsed,
-        available: totalAvailable,
-        remaining: remaining,
-        canApply: remaining > 0
+        currentMonth: {
+            paidFullUsed: user.currentMonthPaidFull,
+            paidHalfUsed: user.currentMonthPaidHalf,
+            paidFullRemaining: currentMonthFullRemaining,
+            paidHalfRemaining: currentMonthHalfRemaining,
+            unpaidLeaves: user.currentMonthUnpaidLeaves
+        },
+        previousMonth: {
+            balanceFull: previousMonthFullAvailable,
+            balanceHalf: previousMonthHalfAvailable
+        },
+        totalAvailable: {
+            paidFull: totalPaidFullAvailable,
+            paidHalf: totalPaidHalfAvailable
+        },
+        canApplyPaidFull: totalPaidFullAvailable > 0,
+        canApplyPaidHalf: totalPaidHalfAvailable > 0
     };
 }
 
-// ------------------ CREATE LEAVE REQUEST ------------------
+// ------------------ CREATE LEAVE REQUEST (UPDATED) ------------------
 module.exports.createLeaveRequestEmail = async function (req, res) {
     try {
         const employeeId = req.user?._id;
@@ -73,19 +97,17 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
-        // ⭐⭐⭐ CHECK MONTHLY QUOTA (1.5 days) ⭐⭐⭐
+        // ⭐⭐⭐ CHECK QUOTA ⭐⭐⭐
         const quota = await checkMonthlyQuota(employeeId);
-        const requestedDays = leaveDuration === "Full Day" ? 1 : 0.5;
+        const isFullDay = leaveDuration === "Full Day";
+        const requestedDays = isFullDay ? 1 : 0.5;
 
-        if (quota.remaining < requestedDays) {
-            return res.status(400).json({ 
-                message: `Monthly limit exceeded! You have ${quota.remaining} day(s) remaining this month. Maximum 1.5 days per month (1 Full + 1 Half).`,  // ✅ UPDATED
-                quotaInfo: {
-                    used: quota.used,
-                    available: quota.available,
-                    remaining: quota.remaining
-                }
-            });
+        // ✅ INFORMATIONAL MESSAGE (Not blocking)
+        let quotaWarning = null;
+        if (isFullDay && quota.totalAvailable.paidFull === 0) {
+            quotaWarning = "⚠️ No paid full-day leaves available. This will be marked as unpaid if approved.";
+        } else if (!isFullDay && quota.totalAvailable.paidHalf === 0) {
+            quotaWarning = "⚠️ No paid half-day leaves available. This will be marked as unpaid if approved.";
         }
 
         const rawEmailId =
@@ -119,7 +141,7 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
             endDate: end,
             rawEmailId,
             attachments,
-            leaveDays: requestedDays, // ⭐ NEW
+            leaveDays: requestedDays,
             receivedAt: new Date(),
             updatedAt: new Date()
         });
@@ -129,7 +151,8 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
         return res.status(201).json({
             message: 'Leave request submitted successfully',
             email: record,
-            quotaInfo: quota
+            quotaInfo: quota,
+            warning: quotaWarning
         });
 
     } catch (err) {
@@ -137,7 +160,7 @@ module.exports.createLeaveRequestEmail = async function (req, res) {
     }
 };
 
-// ------------------ LIST MY LEAVE REQUESTS ------------------
+// ------------------ LIST MY LEAVE REQUESTS (UPDATED) ------------------
 module.exports.listMyLeaveRequestEmails = async function (req, res) {
     try {
         const employeeId = req.user?._id;
@@ -160,11 +183,10 @@ module.exports.listMyLeaveRequestEmails = async function (req, res) {
                 clBalance: user.clBalance,
                 slBalance: user.slBalance,
                 totalPaidLeaves: user.clBalance + user.slBalance,
-                monthlyQuota: {
-                    used: quota.used,
-                    available: quota.available,
-                    remaining: quota.remaining
-                }
+                currentMonth: quota.currentMonth,
+                previousMonth: quota.previousMonth,
+                totalAvailable: quota.totalAvailable,
+                totalUnpaid: user.totalUnpaidLeaves
             }
         });
 
@@ -235,7 +257,7 @@ module.exports.cancelMyLeaveRequestEmail = async function (req, res) {
     }
 };
 
-// ------------------ RESUBMIT REJECTED REQUEST ------------------
+// ------------------ RESUBMIT REJECTED REQUEST (UPDATED) ------------------
 module.exports.resubmitLeaveRequestEmail = async function (req, res) {
     try {
         const employeeId = req.user?._id;
@@ -286,15 +308,17 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
             return res.status(400).json({ message: 'Invalid date range' });
         }
 
-        // ⭐⭐⭐ CHECK MONTHLY QUOTA ⭐⭐⭐
+        // ⭐⭐⭐ CHECK QUOTA ⭐⭐⭐
         const quota = await checkMonthlyQuota(employeeId);
-        const requestedDays = leaveDuration === "Full Day" ? 1 : 0.5;
+        const isFullDay = leaveDuration === "Full Day";
+        const requestedDays = isFullDay ? 1 : 0.5;
 
-        if (quota.remaining < requestedDays) {
-            return res.status(400).json({ 
-                message: `Monthly limit exceeded! You have ${quota.remaining} day(s) remaining. Maximum 1.5 days per month (1 Full + 1 Half).`,  // ✅ UPDATED
-                quotaInfo: quota
-            });
+        // ✅ INFORMATIONAL MESSAGE (Not blocking)
+        let quotaWarning = null;
+        if (isFullDay && quota.totalAvailable.paidFull === 0) {
+            quotaWarning = "⚠️ No paid full-day leaves available. This will be marked as unpaid if approved.";
+        } else if (!isFullDay && quota.totalAvailable.paidHalf === 0) {
+            quotaWarning = "⚠️ No paid half-day leaves available. This will be marked as unpaid if approved.";
         }
 
         // Update record
@@ -332,7 +356,9 @@ module.exports.resubmitLeaveRequestEmail = async function (req, res) {
         return res.status(200).json({
             message: 'Leave request resubmitted successfully',
             attemptsLeft: 3 - item.submissionCount,
-            email: item
+            email: item,
+            quotaInfo: quota,
+            warning: quotaWarning
         });
 
     } catch (err) {

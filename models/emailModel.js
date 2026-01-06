@@ -153,7 +153,7 @@ const emailDataSchema = new mongoose.Schema({
         }
     ],
 
-    // ⭐⭐⭐ NEW FIELDS FOR LEAVE BALANCE TRACKING ⭐⭐⭐
+    // ⭐⭐⭐ LEAVE BALANCE TRACKING FIELDS (UPDATED WITH NEW SYSTEM) ⭐⭐⭐
     isPaid: {
         type: Boolean,
         default: true,
@@ -168,7 +168,25 @@ const emailDataSchema = new mongoose.Schema({
 
     deductedFrom: {
         type: String,
-        enum: ["CL", "SL", "CL+SL", "Unpaid", ""],
+        enum: [
+            // ✅ NEW: Monthly quota tracking values
+            "Current Month Paid (Full)", 
+            "Current Month Paid (Half)",
+            "Previous Month Balance (Full)",
+            "Previous Month Balance (Half)",
+            
+            // ✅ NEW: Unpaid scenarios
+            "Unpaid (No Paid Quota Available)",
+            "Unpaid (Insufficient CL Balance)",
+            "Unpaid (Insufficient SL Balance)",
+            
+            // 🔄 LEGACY: Keep for backward compatibility
+            "CL",
+            "SL",
+            "CL+SL",
+            "Unpaid",
+            ""
+        ],
         default: ""
     },
 
@@ -177,7 +195,7 @@ const emailDataSchema = new mongoose.Schema({
         default: 0,
         min: 0
     }
-    // ⭐⭐⭐ END NEW FIELDS ⭐⭐⭐
+    // ⭐⭐⭐ END LEAVE BALANCE FIELDS ⭐⭐⭐
 });
 
 // Auto-update timestamp

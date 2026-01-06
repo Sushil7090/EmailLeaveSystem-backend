@@ -6,7 +6,7 @@ const bcrypt = require("bcrypt");
 const crypto = require("crypto");
 
 // ---------------------------
-// USER SCHEMA
+// USER SCHEMA (UPDATED WITH NEW LEAVE TRACKING)
 // ---------------------------
 const userSchema = new mongoose.Schema({
   fullname: {
@@ -65,7 +65,9 @@ const userSchema = new mongoose.Schema({
     default: "employee",
   },
 
-  // ⭐⭐⭐ LEAVE BALANCE SYSTEM (CL + SL) ⭐⭐⭐
+  // ⭐⭐⭐ LEAVE BALANCE SYSTEM (UPDATED WITH NEW TRACKING) ⭐⭐⭐
+  
+  // Overall CL/SL Balance (Annual allocation)
   clBalance: {
     type: Number,
     default: 20,
@@ -84,39 +86,72 @@ const userSchema = new mongoose.Schema({
     min: 0,
   },
 
-  // Monthly quota (1 full day + 1 half day = 1.5 days)
-  monthlyQuotaUsed: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 1.5,  // ✅ UPDATED: Changed from 2 to 1.5
-  },
-
+  // ✅ NEW: Monthly Tracking System (1 Full + 1 Half per month)
   currentMonth: {
     type: String,
     default: function () {
-      return new Date().toISOString().slice(0, 7); // YYYY-MM
+      return new Date().toISOString().slice(0, 7); // YYYY-MM format
     },
   },
 
-  carryForwardDays: {
+  // Current month paid leave tracking (0-1 for each)
+  currentMonthPaidFull: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 1,
+  },
+
+  currentMonthPaidHalf: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 1,
+  },
+
+  // Current month unpaid leaves
+  currentMonthUnpaidLeaves: {
     type: Number,
     default: 0,
     min: 0,
   },
 
+  // Previous month carry forward (unused paid leaves)
+  previousMonthBalanceFull: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
+  previousMonthBalanceHalf: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
+  // Lifetime unpaid leaves counter
+  totalUnpaidLeaves: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
+  // Last monthly reset timestamp
   lastMonthlyReset: {
     type: Date,
     default: Date.now,
   },
 
+  // Complete leave history with paid/unpaid tracking
   leaveHistory: {
     type: [
       {
         leaveId: { type: mongoose.Schema.Types.ObjectId, ref: "EmailData" },
-        month: { type: String },
-        days: { type: Number },
-        type: { type: String },
+        month: { type: String }, // YYYY-MM
+        days: { type: Number }, // 0.5 or 1
+        type: { type: String }, // Sick Leave, Casual Leave, Emergency Leave
+        isPaid: { type: Boolean, default: true },
+        deductedFrom: { type: String, default: "" },
         appliedAt: { type: Date, default: Date.now },
       },
     ],
