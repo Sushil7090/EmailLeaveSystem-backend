@@ -649,13 +649,14 @@ module.exports.editLeaveFromCalendar = async function (req, res) {
     }
 };
 
-// ==================== EMPLOYEE LEAVE SUMMARY FOR ADMIN ====================
+// ==================== EMPLOYEE LEAVE SUMMARY FOR ADMIN (UPDATED) ====================
 module.exports.getEmployeeLeaveSummary = async function (req, res) {
     try {
         const currentMonth = new Date().toISOString().slice(0, 7);
 
-        const employees = await User.find({ role: 'employee' })
-            .select('fullname email clBalance slBalance currentMonthPaidFull currentMonthPaidHalf currentMonthUnpaidLeaves previousMonthBalanceFull previousMonthBalanceHalf totalUnpaidLeaves leaveHistory')
+        // ✅ CHANGE: Include BOTH employee AND admin roles
+        const employees = await User.find({ role: { $in: ['employee', 'admin'] } })
+            .select('fullname email role clBalance slBalance currentMonthPaidFull currentMonthPaidHalf currentMonthUnpaidLeaves previousMonthBalanceFull previousMonthBalanceHalf totalUnpaidLeaves leaveHistory')
             .sort({ 'fullname.firstname': 1 });
 
         const summary = employees.map(emp => {
@@ -676,6 +677,7 @@ module.exports.getEmployeeLeaveSummary = async function (req, res) {
                 id: emp._id,
                 name: `${emp.fullname.firstname} ${emp.fullname.lastname}`,
                 email: emp.email,
+                role: emp.role, // ✅ ADDED: Include role in response
                 
                 // Overall Balance
                 overallBalance: {
